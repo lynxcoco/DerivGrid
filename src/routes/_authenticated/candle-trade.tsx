@@ -734,14 +734,14 @@ function CandleTradePage() {
               <button disabled={pending} onClick={() => placeBet("up")}
                 className="group relative h-14 sm:h-16 rounded-xl border-2 border-profit/40 bg-profit/10 hover:bg-profit/25 hover:border-profit/70 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5 shadow-[0_0_12px_rgba(34,197,94,0.15)]">
                 <ChevronUp className="size-5 sm:size-6 text-profit group-hover:scale-110 transition-transform" />
-                <span className="text-xs sm:text-sm font-black text-profit tracking-wide">▲ RISE</span>
+                <span className="text-xs sm:text-sm font-black text-profit tracking-wide">▲ BUY</span>
                 <span className="text-[9px] text-profit/70 font-medium">Candle goes green</span>
                 {pending && <span className="absolute inset-0 rounded-xl bg-profit/5 animate-pulse" />}
               </button>
               <button disabled={pending} onClick={() => placeBet("down")}
                 className="group relative h-14 sm:h-16 rounded-xl border-2 border-loss/40 bg-loss/10 hover:bg-loss/25 hover:border-loss/70 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5 shadow-[0_0_12px_rgba(239,68,68,0.15)]">
                 <ChevronDown className="size-5 sm:size-6 text-loss group-hover:scale-110 transition-transform" />
-                <span className="text-xs sm:text-sm font-black text-loss tracking-wide">▼ FALL</span>
+                <span className="text-xs sm:text-sm font-black text-loss tracking-wide">▼ SELL</span>
                 <span className="text-[9px] text-loss/70 font-medium">Candle goes red</span>
                 {pending && <span className="absolute inset-0 rounded-xl bg-loss/5 animate-pulse" />}
               </button>
