@@ -86,14 +86,15 @@ function AuthPage() {
         const { data, error } = await supabase
           .from("user_roles")
           .select("role")
-          .eq("user_id", session.user.id)
-          .maybeSingle();
+          .eq("user_id", session.user.id);
 
         if (error) {
           console.warn("[useRole] Could not read user_roles:", error.message);
         }
 
-        if (data?.role === "admin") {
+        // Handle multiple rows — pick highest privilege
+        const isAdmin = (data ?? []).some((r: any) => r.role === "admin");
+        if (isAdmin) {
           navigate({ to: "/admin/overview" });
           return;
         }
@@ -163,8 +164,8 @@ function AuthPage() {
             Trade with the tools and speed of an institutional desk.
           </h2>
           <p className="mt-4 text-muted-foreground max-w-md">
-            Live markets, instant funding via M-Pesa & card, and an order ticket
-            built for serious traders.
+            Real markets. Instant payouts. Professional tools built for traders
+            who demand speed, precision and results.
           </p>
           <div className="mt-8 xl:mt-10 grid grid-cols-3 gap-4 xl:gap-6 max-w-md">
             {[

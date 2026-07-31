@@ -99,12 +99,10 @@ function WithdrawPage() {
       if (!user) throw new Error("Please sign in again");
 
       // Check if marketer
-      const { data: roleRow } = await (supabase.from("user_roles") as any)
+      const { data: roleRows } = await (supabase.from("user_roles") as any)
         .select("role")
-        .eq("user_id", user.id)
-        .in("role", ["marketer"])
-        .maybeSingle();
-      const isMarketer = roleRow?.role === "marketer";
+        .eq("user_id", user.id);
+      const isMarketer = (roleRows ?? []).some((r: any) => r.role === "marketer");
 
       const amountCents = Math.round(amt * 100);
 

@@ -619,8 +619,11 @@ function CandleTradePage() {
               <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                 <span className="size-1.5 rounded-full bg-profit animate-pulse" />Live
               </span>
+              <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30 text-[10px] font-bold text-orange-400">
+                🔥 HOT
+              </span>
             </div>
-            <p className="text-[10px] text-muted-foreground leading-none">Candle Predict · 10s </p>
+            <p className="text-[10px] text-muted-foreground leading-none">Predict · Win up to <span className="text-profit font-semibold">4×</span> in 10s</p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -729,22 +732,27 @@ function CandleTradePage() {
             {/* UP / DOWN buttons */}
             <div className="grid grid-cols-2 gap-2.5">
               <button disabled={pending} onClick={() => placeBet("up")}
-                className="group relative h-12 sm:h-14 rounded-xl border-2 border-profit/40 bg-profit/10 hover:bg-profit/20 hover:border-profit/70 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5">
-                <ChevronUp className="size-4 sm:size-5 text-profit group-hover:scale-110 transition-transform" />
-                <span className="text-xs sm:text-sm font-bold text-profit">BUY</span>
+                className="group relative h-14 sm:h-16 rounded-xl border-2 border-profit/40 bg-profit/10 hover:bg-profit/25 hover:border-profit/70 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5 shadow-[0_0_12px_rgba(34,197,94,0.15)]">
+                <ChevronUp className="size-5 sm:size-6 text-profit group-hover:scale-110 transition-transform" />
+                <span className="text-xs sm:text-sm font-black text-profit tracking-wide">▲ RISE</span>
+                <span className="text-[9px] text-profit/70 font-medium">Candle goes green</span>
                 {pending && <span className="absolute inset-0 rounded-xl bg-profit/5 animate-pulse" />}
               </button>
               <button disabled={pending} onClick={() => placeBet("down")}
-                className="group relative h-12 sm:h-14 rounded-xl border-2 border-loss/40 bg-loss/10 hover:bg-loss/20 hover:border-loss/70 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5">
-                <ChevronDown className="size-4 sm:size-5 text-loss group-hover:scale-110 transition-transform" />
-                <span className="text-xs sm:text-sm font-bold text-loss">SELL</span>
+                className="group relative h-14 sm:h-16 rounded-xl border-2 border-loss/40 bg-loss/10 hover:bg-loss/25 hover:border-loss/70 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5 shadow-[0_0_12px_rgba(239,68,68,0.15)]">
+                <ChevronDown className="size-5 sm:size-6 text-loss group-hover:scale-110 transition-transform" />
+                <span className="text-xs sm:text-sm font-black text-loss tracking-wide">▼ FALL</span>
+                <span className="text-[9px] text-loss/70 font-medium">Candle goes red</span>
                 {pending && <span className="absolute inset-0 rounded-xl bg-loss/5 animate-pulse" />}
               </button>
             </div>
 
             <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
               <ShieldCheck className="size-3 shrink-0" />
-              <Link to="/wallet/deposit" className="text-primary hover:underline">Deposit funds</Link>
+              <span>Secured by</span>
+              <span className="font-semibold text-foreground/70">DerivGrid</span>
+              <span>·</span>
+              <Link to="/wallet/deposit" className="text-primary hover:underline font-medium">Add funds →</Link>
             </div>
           </div>
         </div>

@@ -73,23 +73,28 @@ export const Route = createFileRoute("/_authenticated")({
     </div>
   ),
   beforeLoad: async ({ location }) => {
-    // Parallelize auth check and role check in one shot
     const { data, error } = await supabase.auth.getUser();
     if (error || !data.user) throw redirect({ to: "/auth" });
 
-    // Only check role when landing exactly on /dashboard (admin redirect)
-    if (location.pathname === "/dashboard") {
-      const { data: roleRow } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", data.user.id)
-        .maybeSingle();
-      if (roleRow?.role === "admin") {
-        throw redirect({ to: "/admin/overview" });
-      }
+    // Fetch ALL role rows — admin users may have multiple rows (user + admin)
+    const { data: roleRows } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.user.id);
+
+    const isAdmin = (roleRows ?? []).some((r: any) => r.role === "admin");
+
+    // Always redirect admins to admin panel
+    if (isAdmin && !location.pathname.startsWith("/admin")) {
+      throw redirect({ to: "/admin/overview" });
     }
 
-    return { user: data.user };
+    const role = isAdmin ? "admin"
+      : (roleRows ?? []).some((r: any) => r.role === "marketer") ? "marketer"
+      : (roleRows ?? []).some((r: any) => r.role === "support")  ? "support"
+      : "user";
+
+    return { user: data.user, role };
   },
   component: AuthedLayout,
 });
@@ -105,7 +110,7 @@ const NAV_GROUPS = [
   {
     label: "Trading",
     items: [
-      { to: "/candle-trade", label: "Candle Predict",  icon: CandlestickChart },
+      { to: "/candle-trade", label: "Candle Predict 🔥 HOT", icon: CandlestickChart },
       { to: "/trade",        label: "Pro Trader",      icon: LineChart },
       { to: "/history",      label: "Trade History",   icon: History },
       { to: "/alerts",       label: "Price Alerts",    icon: BellRing },
@@ -207,9 +212,15 @@ function AuthedLayout() {
   return (
     <div className="h-screen overflow-hidden flex bg-background">
       {/* When on admin routes, skip the trader shell — admin has its own full layout */}
+      {/* Also show nothing for admins on non-admin routes (redirect is in flight) */}
       {pathname.startsWith("/admin") ? (
         <div className="flex-1 min-w-0 h-full overflow-y-auto">
           <Outlet />
+        </div>
+      ) : isAdmin && !roleLoading ? (
+        // Admin landed on a user route — beforeLoad redirect is firing, show blank
+        <div className="flex-1 flex items-center justify-center">
+          <div className="size-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
         </div>
       ) : (
         <>
@@ -468,7 +479,7 @@ function AuthedLayout() {
           <div className="grid grid-cols-5 max-w-lg mx-auto">
             {[
               { to: "/dashboard",      label: "Home",    icon: LayoutDashboard },
-              { to: "/candle-trade",   label: "Candle Predict",  icon: CandlestickChart },
+              { to: "/candle-trade",   label: "🔥 Predict", icon: CandlestickChart },
               { to: "/wallet/deposit", label: "Deposit", icon: ArrowDownToLine },
               { to: "/wallet",         label: "Wallet",  icon: Wallet },
               { to: "/profile",        label: "Me",      icon: User },

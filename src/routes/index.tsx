@@ -100,8 +100,8 @@ const categories = [
 const features = [
   {
     icon: Zap,
-    title: "Instant deposits",
-    desc: "Fund your account in seconds with M-Pesa STK push or international cards.",
+    title: "Instant funding",
+    desc: "Top up your account in seconds via mobile money or bank — funds reflect immediately.",
   },
   {
     icon: LineChart,
@@ -222,9 +222,10 @@ function Landing() {
               </span>
             </h1>
             <p className="mt-5 sm:mt-6 text-base sm:text-lg text-muted-foreground max-w-2xl leading-relaxed">
-              DerivGrid gives you everything a serious trader needs — live forex,
-              synthetic & volatility indices, crypto, commodities and stocks. Fund
-              instantly via M-Pesa or card and start trading in minutes.
+              Join thousands of traders who profit daily on DerivGrid — real-time
+              forex, synthetic indices, crypto, commodities and stocks. Instant
+              funding, lightning-fast execution, and payouts straight to your phone
+              in minutes. Your edge starts here.
             </p>
             <div className="mt-7 sm:mt-8 flex flex-col sm:flex-row gap-3">
               <Button size="lg" asChild className="h-12 px-6 w-full sm:w-auto">

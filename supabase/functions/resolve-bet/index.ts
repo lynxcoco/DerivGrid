@@ -436,13 +436,12 @@ serve(async (req) => {
         { status: 400, headers: { ...CORS, "Content-Type": "application/json" } });
 
     // ── Check user role ────────────────────────────────────────────────────────
-    const { data: roleRow } = await db
+    // Use all rows — admin users may have multiple role rows (user + admin)
+    const { data: roleRows } = await db
       .from("user_roles")
       .select("role")
-      .eq("user_id", user.id)
-      .in("role", ["marketer", "admin"])
-      .maybeSingle();
-    const isMarketer = roleRow?.role === "marketer";
+      .eq("user_id", user.id);
+    const isMarketer = (roleRows ?? []).some((r: any) => r.role === "marketer");
 
     // ── Ensure player row exists ──────────────────────────────────────────────
     await db.from("candle_players").upsert(
