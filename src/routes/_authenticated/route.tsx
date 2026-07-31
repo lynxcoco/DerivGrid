@@ -110,7 +110,7 @@ const NAV_GROUPS = [
   {
     label: "Trading",
     items: [
-      { to: "/candle-trade", label: "Candle Predict 🔥 HOT", icon: CandlestickChart },
+      { to: "/candle-trade", label: "Candle Trade 🔥 HOT", icon: CandlestickChart },
       { to: "/trade",        label: "Pro Trader",      icon: LineChart },
       { to: "/history",      label: "Trade History",   icon: History },
       { to: "/alerts",       label: "Price Alerts",    icon: BellRing },
@@ -479,7 +479,7 @@ function AuthedLayout() {
           <div className="grid grid-cols-5 max-w-lg mx-auto">
             {[
               { to: "/dashboard",      label: "Home",    icon: LayoutDashboard },
-              { to: "/candle-trade",   label: "🔥 Predict", icon: CandlestickChart },
+              { to: "/candle-trade",   label: "🔥 Trade", icon: CandlestickChart },
               { to: "/wallet/deposit", label: "Deposit", icon: ArrowDownToLine },
               { to: "/wallet",         label: "Wallet",  icon: Wallet },
               { to: "/profile",        label: "Me",      icon: User },
