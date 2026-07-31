@@ -157,8 +157,12 @@ function AdminReports() {
   const [deposits,    setDeposits]    = useState<DepositRow[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRow[]>([]);
   const [bets,        setBets]        = useState<BetRow[]>([]);
+  const [marketerIds, setMarketerIds] = useState<Set<string>>(new Set());
   const [loading,  setLoading]  = useState(false);
   const [hasFetched, setHasFetched] = useState(false);
+
+  // Account type filter: all | real | demo
+  const [accountFilter, setAccountFilter] = useState<"all" | "real" | "demo">("all");
 
   // UI state
   const [activeTab,    setActiveTab]    = useState<ReportType>("summary");
@@ -172,7 +176,7 @@ function AdminReports() {
     setLoading(true);
     const [start, end] = periodRange(period, fromDate, toDate);
 
-    const [{ data: deps }, { data: wds }, { data: bs }] = await Promise.all([
+    const [{ data: deps }, { data: wds }, { data: bs }, { data: mRoles }] = await Promise.all([
       supabase.from("deposits")
         .select("id, user_id, amount_cents, currency, status, phone, provider_ref, created_at")
         .gte("created_at", start).lte("created_at", end)
@@ -185,8 +189,11 @@ function AdminReports() {
         .select("id, user_id, bet_amount_cents, outcome, gross_return_cents, net_profit_cents, created_at")
         .gte("created_at", start).lte("created_at", end)
         .order("created_at", { ascending: false }).limit(2000),
+      supabase.from("user_roles").select("user_id").eq("role", "marketer"),
     ]);
 
+    const mIds = new Set((mRoles ?? []).map((r: any) => r.user_id));
+    setMarketerIds(mIds);
     setDeposits((deps ?? []) as DepositRow[]);
     setWithdrawals((wds ?? []) as WithdrawalRow[]);
     setBets((bs ?? []) as BetRow[]);
@@ -195,18 +202,35 @@ function AdminReports() {
   };
 
   // ── Computed KPIs ────────────────────────────────────────────────────────────
-  const completedDeps = deposits.filter(d => d.status === "completed");
-  const completedWds  = withdrawals.filter(w => w.status === "completed");
+  // ── Apply account filter to base data ─────────────────────────────────────
+  const filteredDeposits = deposits.filter(d =>
+    accountFilter === "all" ? true :
+    accountFilter === "demo" ? marketerIds.has(d.user_id) :
+    !marketerIds.has(d.user_id)
+  );
+  const filteredWithdrawals = withdrawals.filter(w =>
+    accountFilter === "all" ? true :
+    accountFilter === "demo" ? marketerIds.has(w.user_id) :
+    !marketerIds.has(w.user_id)
+  );
+  const filteredBets = bets.filter(b =>
+    accountFilter === "all" ? true :
+    accountFilter === "demo" ? marketerIds.has(b.user_id) :
+    !marketerIds.has(b.user_id)
+  );
+
+  const completedDeps = filteredDeposits.filter(d => d.status === "completed");
+  const completedWds  = filteredWithdrawals.filter(w => w.status === "completed");
   const totalDepVol   = completedDeps.reduce((s, d) => s + d.amount_cents, 0);
   const totalWdVol    = completedWds.reduce((s, w) => s + w.amount_cents, 0);
   const netFlow       = totalDepVol - totalWdVol;
-  const totalStaked   = bets.reduce((s, b) => s + b.bet_amount_cents, 0);
-  const totalPayouts  = bets.filter(b => b.outcome === "win").reduce((s, b) => s + b.gross_return_cents, 0);
+  const totalStaked   = filteredBets.reduce((s, b) => s + b.bet_amount_cents, 0);
+  const totalPayouts  = filteredBets.filter(b => b.outcome === "win").reduce((s, b) => s + b.gross_return_cents, 0);
   const housePnl      = totalStaked - totalPayouts;
-  const winBets       = bets.filter(b => b.outcome === "win").length;
-  const winRate       = bets.length > 0 ? ((winBets / bets.length) * 100).toFixed(1) : "0.0";
-  const pendingDeps   = deposits.filter(d => d.status === "pending").length;
-  const pendingWds    = withdrawals.filter(w => w.status === "pending").length;
+  const winBets       = filteredBets.filter(b => b.outcome === "win").length;
+  const winRate       = filteredBets.length > 0 ? ((winBets / filteredBets.length) * 100).toFixed(1) : "0.0";
+  const pendingDeps   = filteredDeposits.filter(d => d.status === "pending").length;
+  const pendingWds    = filteredWithdrawals.filter(w => w.status === "pending").length;
 
   // ── Sort + filter helpers ─────────────────────────────────────────────────
   const toggleSort = (field: string) => {
@@ -236,6 +260,9 @@ function AdminReports() {
       return sortDir === "asc" ? av - bv : bv - av;
     });
 
+  const visibleDeps = applyDepFilter(filteredDeposits);
+  const visibleWds  = applyWdFilter(filteredWithdrawals);
+
   const applyBetFilter = (rows: BetRow[]) => rows
     .filter(r => statusFilter === "all" || r.outcome === statusFilter)
     .filter(r => !search || r.user_id.includes(search))
@@ -245,9 +272,7 @@ function AdminReports() {
       return sortDir === "asc" ? av - bv : bv - av;
     });
 
-  const visibleDeps = applyDepFilter(deposits);
-  const visibleWds  = applyWdFilter(withdrawals);
-  const visibleBets = applyBetFilter(bets);
+  const visibleBets = applyBetFilter(filteredBets);
 
   // ── CSV exports ──────────────────────────────────────────────────────────────
   const label = periodLabel(period, fromDate, toDate).replace(/\s+/g, "_").replace(/→/g, "to");
@@ -330,9 +355,9 @@ function AdminReports() {
 
   const TABS: { value: ReportType; label: string }[] = [
     { value: "summary",     label: "Summary"     },
-    { value: "deposits",    label: `Deposits (${deposits.length})`    },
-    { value: "withdrawals", label: `Withdrawals (${withdrawals.length})` },
-    { value: "bets",        label: `Bets (${bets.length})`        },
+    { value: "deposits",    label: `Deposits (${filteredDeposits.length})`    },
+    { value: "withdrawals", label: `Withdrawals (${filteredWithdrawals.length})` },
+    { value: "bets",        label: `Bets (${filteredBets.length})`        },
   ];
 
   return (
@@ -422,6 +447,32 @@ function AdminReports() {
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Calendar className="size-3.5" />
             <span>Showing: <strong className="text-foreground">{periodLabel(period, fromDate, toDate)}</strong></span>
+          </div>
+
+          {/* ── Account type filter ───────────────────────────────────────── */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium">Account type:</span>
+            {([
+              { key: "all",  label: "All Accounts" },
+              { key: "real", label: "🟢 Real Traders" },
+              { key: "demo", label: "🟡 Demo (Marketer)" },
+            ] as const).map(({ key, label }) => (
+              <button key={key} onClick={() => setAccountFilter(key)}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                  accountFilter === key
+                    ? key === "demo"
+                      ? "bg-warning/20 border-warning/40 text-warning"
+                      : "bg-primary/15 border-primary/30 text-primary"
+                    : "bg-surface border-border/60 text-muted-foreground hover:text-foreground"
+                }`}>
+                {label}
+              </button>
+            ))}
+            {accountFilter === "demo" && (
+              <span className="text-xs text-warning/80 italic ml-1">
+                Demo stats shown — no real money involved
+              </span>
+            )}
           </div>
 
           {/* ── KPI summary row ────────────────────────────────────────────── */}

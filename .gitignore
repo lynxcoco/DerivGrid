@@ -17,6 +17,9 @@ dist/
 # Cloudflare / Wrangler
 .wrangler/
 
+# Vercel output — never commit, Vercel rebuilds from source
+.vercel/
+
 # Cache
 .cache/
 .vite/
