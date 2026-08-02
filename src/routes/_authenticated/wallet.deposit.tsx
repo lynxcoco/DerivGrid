@@ -21,10 +21,10 @@ type Step = "form" | "waiting" | "success" | "review" | "timeout";
 /** Normalise phone to 254XXXXXXXXX format */
 function normalisePhone(raw: string): string {
   const c = raw.trim().replace(/[\s\-()]/g, "");
-  if (/^2547\d{8}$/.test(c))   return c;
-  if (/^07\d{8}$/.test(c))     return "254" + c.slice(1);
-  if (/^7\d{8}$/.test(c))      return "2547" + c.slice(1);
-  if (/^\+2547\d{8}$/.test(c)) return c.slice(1);
+  if (/^254(7|1)\d{8}$/.test(c))   return c;
+  if (/^0(7|1)\d{8}$/.test(c))     return "254" + c.slice(1);
+  if (/^(7|1)\d{8}$/.test(c))      return "254" + c;
+  if (/^\+254(7|1)\d{8}$/.test(c)) return c.slice(1);
   // Return as-is — validation below will reject invalid formats
   return c.replace(/\D/g, "");
 }
@@ -247,8 +247,8 @@ function DepositPage() {
     const amt       = parseFloat(amount);
     let ok = true;
 
-    if (!/^2547\d{8}$/.test(normPhone)) {
-      setPhoneErr("Enter a valid M-Pesa number (07XX or +2547XX)");
+    if (!/^254(7|1)\d{8}$/.test(normPhone)) {
+      setPhoneErr("Enter a valid M-Pesa number (07XX, 01XX, or +254)");
       ok = false;
     }
     if (!amount || isNaN(amt) || amt < MIN_KES) {
@@ -416,6 +416,9 @@ function DepositPage() {
           <h2 className="text-lg font-semibold">Waiting for M-Pesa PIN</h2>
           <p className="text-sm text-muted-foreground mt-1">
             A prompt was sent to your phone. Enter your PIN now.
+          </p>
+          <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mt-3">
+            ⚠️ Almost done! Stay on this page while we confirm your deposit.
           </p>
         </div>
         <Button
