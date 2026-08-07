@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { RefreshCw, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight, Info, Users, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
@@ -47,6 +48,12 @@ function AdminWithdrawals() {
   const [marketerIds, setMarketerIds] = useState<Set<string>>(new Set());
   const processingRef = useRef<string | null>(null);
 
+  // ── Bulk selection state ────────────────────────────────────────────────
+  const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set());
+  const [bulkRunning,   setBulkRunning]   = useState(false);
+  const [bulkProgress,  setBulkProgress]  = useState<{ done: number; total: number } | null>(null);
+  const bulkAbortRef = useRef(false);
+
   useEffect(() => {
     supabase.from("user_roles").select("user_id").eq("role", "marketer").then(({ data }) => {
       if (data) setMarketerIds(new Set(data.map((r: any) => r.user_id)));
@@ -71,11 +78,37 @@ function AdminWithdrawals() {
     setLoading(false);
   }, [filter, page, accountTab, marketerIds]);
 
-  useEffect(() => { setPage(0); }, [filter, accountTab]);
+  useEffect(() => { setPage(0); setSelectedIds(new Set()); }, [filter, accountTab]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setSelectedIds(new Set()); }, [page]);
 
   const totalPages  = Math.ceil(total / PAGE_SIZE);
   const pendingCount = rows.filter(r => r.status === "pending").length;
+
+  // Rows eligible for bulk actions: pending + not a demo/marketer account
+  const selectableRows = useMemo(
+    () => rows.filter(r => r.status === "pending" && !r.is_marketer),
+    [rows]
+  );
+  const selectedRows = useMemo(
+    () => selectableRows.filter(r => selectedIds.has(r.id)),
+    [selectableRows, selectedIds]
+  );
+  const allSelectableSelected = selectableRows.length > 0 && selectedRows.length === selectableRows.length;
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      if (allSelectableSelected) return new Set();
+      return new Set(selectableRows.map(r => r.id));
+    });
+  };
+  const toggleSelectRow = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   // ── Approve & dispatch B2C ──────────────────────────────────────────────────
   const approve = async (w: WithdrawalRow) => {
@@ -97,7 +130,7 @@ function AdminWithdrawals() {
           (supabase.from("notifications") as any).insert({ user_id: w.user_id, title: "Withdrawal approved", body: `Your ${fmtKes(w.amount_cents, w.currency)} withdrawal has been approved.`, type: "info", is_read: false }),
         ]);
         toast.success("Approved manually (no phone on file)");
-        load(); return;
+        return;
       }
       const merchantTransRef = `SD-WD-${w.id.slice(0, 8)}-${Date.now()}`;
       await (supabase.from("withdrawals") as any).update({ provider_ref: merchantTransRef }).eq("id", w.id);
@@ -112,7 +145,6 @@ function AdminWithdrawals() {
           toast.error(`B2C failed: ${msg}. Funds refunded.`, { duration: 8000 });
         }
       } catch { await refundWithdrawal(w, "Network error reaching SasaPay"); toast.error("Could not reach SasaPay. Funds refunded."); }
-      load();
     } catch (e: any) { toast.error(e?.message ?? "Approval failed"); }
     finally { processingRef.current = null; setProcessing(null); }
   };
@@ -131,7 +163,7 @@ function AdminWithdrawals() {
         (supabase.from("withdrawals") as any).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", w.id).eq("status", "pending"),
         (supabase.from("notifications") as any).insert({ user_id: w.user_id, title: "Withdrawal rejected", body: `Your ${fmtKes(w.amount_cents, w.currency)} withdrawal was rejected. Funds returned.`, type: "info", is_read: false }),
       ]);
-      toast.info("Rejected — funds refunded"); load();
+      toast.info("Rejected — funds refunded");
     } catch (e: any) { toast.error(e?.message ?? "Rejection failed"); }
     finally { processingRef.current = null; setProcessing(null); }
   };
@@ -147,6 +179,54 @@ function AdminWithdrawals() {
     ]);
   };
 
+  // ── Bulk approve / reject ───────────────────────────────────────────────
+  const runBulk = async (action: "approve" | "reject") => {
+    if (bulkRunning || selectedRows.length === 0) return;
+    const targets = [...selectedRows];
+    const label = action === "approve" ? "Approving" : "Rejecting";
+
+    if (action === "reject") {
+      const ok = window.confirm(`Reject ${targets.length} withdrawal${targets.length > 1 ? "s" : ""} and refund the wallets? This cannot be undone.`);
+      if (!ok) return;
+    } else {
+      const ok = window.confirm(`Approve & dispatch ${targets.length} withdrawal${targets.length > 1 ? "s" : ""}? Each will be sent to SasaPay individually.`);
+      if (!ok) return;
+    }
+
+    bulkAbortRef.current = false;
+    setBulkRunning(true);
+    setBulkProgress({ done: 0, total: targets.length });
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkAbortRef.current) break;
+      const w = targets[i];
+      try {
+        if (action === "approve") await approve(w);
+        else await reject(w);
+        succeeded++;
+      } catch {
+        failed++;
+      }
+      setBulkProgress({ done: i + 1, total: targets.length });
+      // Small pacing delay so we don't hammer SasaPay / Supabase back-to-back
+      if (i < targets.length - 1) await new Promise(r => setTimeout(r, 350));
+    }
+
+    setBulkRunning(false);
+    setBulkProgress(null);
+    setSelectedIds(new Set());
+
+    if (failed === 0) {
+      toast.success(`Bulk ${action === "approve" ? "approval" : "rejection"} complete — ${succeeded} processed`);
+    } else {
+      toast.warning(`Bulk ${action} finished — ${succeeded} succeeded, ${failed} had issues (check toasts above)`);
+    }
+    load();
+  };
+
   return (
     <div className="p-3 sm:p-6 lg:p-8 space-y-4 sm:space-y-5 max-w-6xl mx-auto">
 
@@ -158,7 +238,7 @@ function AdminWithdrawals() {
             {total.toLocaleString()} records · <span className="text-warning font-medium">{pendingCount} pending</span>
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5 shrink-0">
+        <Button variant="outline" size="sm" onClick={load} disabled={loading || bulkRunning} className="gap-1.5 shrink-0">
           <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>
@@ -205,6 +285,36 @@ function AdminWithdrawals() {
         ))}
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="sticky top-2 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/10 backdrop-blur px-4 py-2.5 shadow-card">
+          <span className="text-xs sm:text-sm font-medium text-primary">
+            {bulkRunning && bulkProgress
+              ? `Processing ${bulkProgress.done}/${bulkProgress.total}…`
+              : `${selectedRows.length} selected`}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={bulkRunning}
+              onClick={() => runBulk("approve")}
+              className="h-7 text-xs gap-1.5 text-profit border-profit/30 hover:bg-profit/10">
+              {bulkRunning ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}
+              Approve Selected
+            </Button>
+            <Button size="sm" variant="outline" disabled={bulkRunning}
+              onClick={() => runBulk("reject")}
+              className="h-7 text-xs gap-1.5 text-loss border-loss/30 hover:bg-loss/10">
+              <XCircle className="size-3" />
+              Reject Selected
+            </Button>
+            <Button size="sm" variant="ghost" disabled={bulkRunning}
+              onClick={() => setSelectedIds(new Set())}
+              className="h-7 text-xs text-muted-foreground">
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>
       ) : rows.length === 0 ? (
@@ -216,6 +326,16 @@ function AdminWithdrawals() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/40 bg-surface/30 text-xs text-muted-foreground uppercase">
+                  <th className="text-left px-4 py-3 font-semibold w-8">
+                    {selectableRows.length > 0 && (
+                      <Checkbox
+                        checked={allSelectableSelected}
+                        onCheckedChange={toggleSelectAll}
+                        disabled={bulkRunning}
+                        aria-label="Select all eligible withdrawals"
+                      />
+                    )}
+                  </th>
                   <th className="text-left px-4 py-3 font-semibold">Account</th>
                   <th className="text-left px-4 py-3 font-semibold">Amount</th>
                   <th className="text-left px-4 py-3 font-semibold">Phone</th>
@@ -225,79 +345,106 @@ function AdminWithdrawals() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(w => (
-                  <tr key={w.id} className={`border-b border-border/25 hover:bg-surface/30 transition-colors last:border-0 ${w.is_marketer ? "bg-warning/3" : ""}`}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[10px] text-muted-foreground">{w.user_id.slice(0, 10)}…</span>
-                        {w.is_marketer && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-warning/20 text-warning border border-warning/30">DEMO</span>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono font-semibold text-loss">−{fmtKes(w.amount_cents, w.currency)}</td>
-                    <td className="px-4 py-3 text-xs">{w.phone ?? "—"}</td>
-                    <td className="px-4 py-3">
-                      <Badge variant="outline" className={`text-[10px] capitalize ${STATUS_COLOR[w.status] ?? ""}`}>{w.status}</Badge>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.created_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {w.status === "pending" && !w.is_marketer && (
-                        <div className="flex items-center justify-end gap-1">
-                          <Button size="sm" variant="ghost" disabled={processing === w.id} onClick={() => approve(w)} className="h-7 text-profit hover:bg-profit/10 gap-1 text-xs">
-                            {processing === w.id ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}Approve & Send
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={!!processing} onClick={() => reject(w)} className="h-7 text-loss hover:bg-loss/10 gap-1 text-xs">
-                            <XCircle className="size-3" />Reject
-                          </Button>
+                {rows.map(w => {
+                  const selectable = w.status === "pending" && !w.is_marketer;
+                  return (
+                    <tr key={w.id} className={`border-b border-border/25 hover:bg-surface/30 transition-colors last:border-0 ${w.is_marketer ? "bg-warning/3" : ""} ${selectedIds.has(w.id) ? "bg-primary/5" : ""}`}>
+                      <td className="px-4 py-3">
+                        {selectable && (
+                          <Checkbox
+                            checked={selectedIds.has(w.id)}
+                            onCheckedChange={() => toggleSelectRow(w.id)}
+                            disabled={bulkRunning || (!!processing && processing !== w.id)}
+                            aria-label={`Select withdrawal ${w.id}`}
+                          />
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[10px] text-muted-foreground">{w.user_id.slice(0, 10)}…</span>
+                          {w.is_marketer && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-warning/20 text-warning border border-warning/30">DEMO</span>}
                         </div>
-                      )}
-                      {w.status === "pending" && w.is_marketer && <span className="text-[10px] text-warning">demo — auto</span>}
-                      {w.status === "processing" && (
-                        <span className="text-xs text-primary flex items-center gap-1 justify-end">
-                          <Loader2 className="size-3 animate-spin" />Awaiting SasaPay…
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-3 font-mono font-semibold text-loss">−{fmtKes(w.amount_cents, w.currency)}</td>
+                      <td className="px-4 py-3 text-xs">{w.phone ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant="outline" className={`text-[10px] capitalize ${STATUS_COLOR[w.status] ?? ""}`}>{w.status}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.created_at)}</td>
+                      <td className="px-4 py-3 text-right">
+                        {w.status === "pending" && !w.is_marketer && (
+                          <div className="flex items-center justify-end gap-1">
+                            <Button size="sm" variant="ghost" disabled={!!processing || bulkRunning} onClick={() => approve(w).then(load)} className="h-7 text-profit hover:bg-profit/10 gap-1 text-xs">
+                              {processing === w.id ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}Approve & Send
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={!!processing || bulkRunning} onClick={() => reject(w).then(load)} className="h-7 text-loss hover:bg-loss/10 gap-1 text-xs">
+                              <XCircle className="size-3" />Reject
+                            </Button>
+                          </div>
+                        )}
+                        {w.status === "pending" && w.is_marketer && <span className="text-[10px] text-warning">demo — auto</span>}
+                        {w.status === "processing" && (
+                          <span className="text-xs text-primary flex items-center gap-1 justify-end">
+                            <Loader2 className="size-3 animate-spin" />Awaiting SasaPay…
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
           {/* Mobile cards */}
           <div className="md:hidden space-y-2">
-            {rows.map(w => (
-              <div key={w.id} className={`rounded-xl border bg-gradient-surface p-4 space-y-3 shadow-card ${w.is_marketer ? "border-warning/30" : "border-border/50"}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="font-mono font-bold text-base text-loss">−{fmtKes(w.amount_cents, w.currency)}</p>
-                      {w.is_marketer && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-warning/20 text-warning border border-warning/30">DEMO</span>}
+            {rows.map(w => {
+              const selectable = w.status === "pending" && !w.is_marketer;
+              return (
+                <div key={w.id} className={`rounded-xl border bg-gradient-surface p-4 space-y-3 shadow-card ${w.is_marketer ? "border-warning/30" : "border-border/50"} ${selectedIds.has(w.id) ? "ring-1 ring-primary/40" : ""}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2">
+                      {selectable && (
+                        <Checkbox
+                          checked={selectedIds.has(w.id)}
+                          onCheckedChange={() => toggleSelectRow(w.id)}
+                          disabled={bulkRunning || (!!processing && processing !== w.id)}
+                          className="mt-1"
+                          aria-label={`Select withdrawal ${w.id}`}
+                        />
+                      )}
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-mono font-bold text-base text-loss">−{fmtKes(w.amount_cents, w.currency)}</p>
+                          {w.is_marketer && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-warning/20 text-warning border border-warning/30">DEMO</span>}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{w.phone ?? "—"}</p>
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{w.phone ?? "—"}</p>
+                    <Badge variant="outline" className={`text-[10px] capitalize shrink-0 ${STATUS_COLOR[w.status] ?? ""}`}>{w.status}</Badge>
                   </div>
-                  <Badge variant="outline" className={`text-[10px] capitalize shrink-0 ${STATUS_COLOR[w.status] ?? ""}`}>{w.status}</Badge>
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span className="font-mono">{w.user_id.slice(0, 14)}…</span>
-                  <span>{fmtDate(w.created_at)}</span>
-                </div>
-                {w.status === "pending" && !w.is_marketer && (
-                  <div className="flex gap-2 pt-1 border-t border-border/30">
-                    <Button size="sm" variant="outline" disabled={processing === w.id} onClick={() => approve(w)} className="flex-1 h-8 text-xs gap-1.5 text-profit border-profit/30 hover:bg-profit/10">
-                      {processing === w.id ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}Approve & Send
-                    </Button>
-                    <Button size="sm" variant="outline" disabled={!!processing} onClick={() => reject(w)} className="flex-1 h-8 text-xs gap-1.5 text-loss border-loss/30 hover:bg-loss/10">
-                      <XCircle className="size-3" />Reject
-                    </Button>
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span className="font-mono">{w.user_id.slice(0, 14)}…</span>
+                    <span>{fmtDate(w.created_at)}</span>
                   </div>
-                )}
-                {w.status === "processing" && (
-                  <p className="text-xs text-primary flex items-center gap-1.5 pt-1 border-t border-border/30">
-                    <Loader2 className="size-3 animate-spin" />B2C dispatched — awaiting SasaPay confirmation
-                  </p>
-                )}
-              </div>
-            ))}
+                  {w.status === "pending" && !w.is_marketer && (
+                    <div className="flex gap-2 pt-1 border-t border-border/30">
+                      <Button size="sm" variant="outline" disabled={!!processing || bulkRunning} onClick={() => approve(w).then(load)} className="flex-1 h-8 text-xs gap-1.5 text-profit border-profit/30 hover:bg-profit/10">
+                        {processing === w.id ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}Approve & Send
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={!!processing || bulkRunning} onClick={() => reject(w).then(load)} className="flex-1 h-8 text-xs gap-1.5 text-loss border-loss/30 hover:bg-loss/10">
+                        <XCircle className="size-3" />Reject
+                      </Button>
+                    </div>
+                  )}
+                  {w.status === "processing" && (
+                    <p className="text-xs text-primary flex items-center gap-1.5 pt-1 border-t border-border/30">
+                      <Loader2 className="size-3 animate-spin" />B2C dispatched — awaiting SasaPay confirmation
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Pagination */}
@@ -305,20 +452,20 @@ function AdminWithdrawals() {
             <div className="flex items-center justify-between gap-3 pt-2">
               <p className="text-xs text-muted-foreground">Page {page + 1} of {totalPages} · {total.toLocaleString()} records</p>
               <div className="flex items-center gap-1.5">
-                <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(p => p - 1)} className="h-8 w-8 p-0">
+                <Button size="sm" variant="outline" disabled={page === 0 || bulkRunning} onClick={() => setPage(p => p - 1)} className="h-8 w-8 p-0">
                   <ChevronLeft className="size-4" />
                 </Button>
                 {[...Array(Math.min(5, totalPages))].map((_, i) => {
                   const pg = page < 3 ? i : page - 2 + i;
                   if (pg >= totalPages) return null;
                   return (
-                    <button key={pg} onClick={() => setPage(pg)}
+                    <button key={pg} disabled={bulkRunning} onClick={() => setPage(pg)}
                       className={`h-8 min-w-[2rem] px-2 rounded-lg text-xs font-medium border transition-colors ${pg === page ? "bg-primary text-primary-foreground border-primary" : "border-border/60 text-muted-foreground hover:text-foreground"}`}>
                       {pg + 1}
                     </button>
                   );
                 })}
-                <Button size="sm" variant="outline" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} className="h-8 w-8 p-0">
+                <Button size="sm" variant="outline" disabled={page >= totalPages - 1 || bulkRunning} onClick={() => setPage(p => p + 1)} className="h-8 w-8 p-0">
                   <ChevronRight className="size-4" />
                 </Button>
               </div>
