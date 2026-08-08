@@ -450,6 +450,7 @@ function DepositPage() {
           <span>
             An M-Pesa STK push prompt will be sent to your phone. Enter your PIN within{" "}
             <strong>90 seconds</strong> to complete the deposit.
+            <span className="block mt-1">Works with both 07XX and 01XX Safaricom numbers.</span>
           </span>
         </div>
 
@@ -459,7 +460,7 @@ function DepositPage() {
             <div className="relative mt-1.5">
               <Input
                 id="dep-phone"
-                placeholder="0712 345 678"
+                placeholder="07XX or 01XX XXX XXX"
                 className="h-11 pr-10"
                 inputMode="numeric"
                 autoComplete="off"
