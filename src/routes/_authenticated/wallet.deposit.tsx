@@ -3,10 +3,12 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { usePlatformSettings } from "@/hooks/use-platform-settings";
+import { useCampaigns } from "@/hooks/use-campaigns";
+import { CampaignBanner } from "@/components/campaign-banner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, Loader2, ArrowLeft, Info, Eye, EyeOff } from "lucide-react";
+import { CheckCircle2, Loader2, ArrowLeft, Info, Eye, EyeOff, Sparkles, Gift } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/wallet/deposit")({
   head: () => ({ meta: [{ title: "Deposit · DerivGrid" }] }),
@@ -25,11 +27,10 @@ function normalisePhone(raw: string): string {
   if (/^0(7|1)\d{8}$/.test(c))     return "254" + c.slice(1);
   if (/^(7|1)\d{8}$/.test(c))      return "254" + c;
   if (/^\+254(7|1)\d{8}$/.test(c)) return c.slice(1);
-  // Return as-is — validation below will reject invalid formats
   return c.replace(/\D/g, "");
 }
 
-/** Mask digits at positions 4-6 (the "middle three") with *** */
+/** Mask digits at positions 4-6 with *** */
 function maskMiddle(digits: string): string {
   const chars = digits.split("");
   for (let i = 4; i < Math.min(chars.length, 7); i++) {
@@ -98,6 +99,7 @@ const MARKETER_RESOLVE_AT = 73;
 
 function DepositPage() {
   const { settings } = usePlatformSettings({ fresh: true });
+  const { getActiveCampaign, calculateDepositBonus } = useCampaigns();
   const MIN_KES = settings.min_deposit_kes;
   const MAX_KES = settings.max_deposit_kes;
 
@@ -109,6 +111,8 @@ function DepositPage() {
   const [amountErr, setAmountErr] = useState("");
   const [countdown, setCountdown] = useState(TIMEOUT_SECS);
   const [showPhone, setShowPhone] = useState(false);
+  const [depositCampaign, setDepositCampaign] = useState<any>(null);
+  const [calculatedBonus, setCalculatedBonus] = useState(0);
 
   const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef   = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -117,6 +121,23 @@ function DepositPage() {
   const resolvedRef  = useRef(false);
 
   const displayedPhone = showPhone ? phone : maskMiddle(phone);
+
+  // Load campaign on mount
+  useEffect(() => {
+    const campaign = getActiveCampaign('deposit_double');
+    setDepositCampaign(campaign);
+  }, [getActiveCampaign]);
+
+  // Calculate bonus when amount changes
+  useEffect(() => {
+    if (amount && depositCampaign) {
+      const amountCents = Math.round(parseFloat(amount) * 100);
+      const bonus = calculateDepositBonus(amountCents);
+      setCalculatedBonus(bonus);
+    } else {
+      setCalculatedBonus(0);
+    }
+  }, [amount, depositCampaign, calculateDepositBonus]);
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
@@ -134,8 +155,73 @@ function DepositPage() {
     cleanup();
     setCountdown(0);
     setStep(outcome);
-    if (outcome === "success") toast.success("Deposit confirmed! Wallet credited.");
-  }, [cleanup]);
+    if (outcome === "success") {
+      const bonusMsg = calculatedBonus > 0 
+        ? ` Deposit bonus of KES ${(calculatedBonus/100).toLocaleString()} credited!` 
+        : "";
+      toast.success(`Deposit confirmed! Wallet credited.${bonusMsg}`);
+    }
+  }, [cleanup, calculatedBonus]);
+
+  // ── Complete deposit with bonus ────────────────────────────────────────────
+  const completeDeposit = useCallback(async (depositId: string) => {
+    // Update deposit status
+    await (supabase.from("deposits") as any)
+      .update({ status: "completed", updated_at: new Date().toISOString() })
+      .eq("id", depositId);
+
+    // Get deposit info
+    const { data: depData } = await (supabase.from("deposits") as any)
+      .select("wallet_id, amount_cents, bonus_cents, user_id, campaign_id")
+      .eq("id", depositId)
+      .single();
+
+    if (depData) {
+      // Get current wallet balance
+      const { data: walletData } = await (supabase.from("wallets") as any)
+        .select("balance_cents")
+        .eq("id", depData.wallet_id)
+        .single();
+
+      const totalCredit = depData.amount_cents + (depData.bonus_cents || 0);
+
+      // Credit wallet with deposit amount + bonus
+      await (supabase.from("wallets") as any)
+        .update({
+          balance_cents: (walletData?.balance_cents ?? 0) + totalCredit,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", depData.wallet_id);
+
+      // Record deposit transaction
+      await (supabase.from("transactions") as any).insert({
+        user_id:      depData.user_id,
+        wallet_id:    depData.wallet_id,
+        type:         "deposit",
+        amount_cents: depData.amount_cents,
+        currency:     "KES",
+        description:  "Deposit via M-Pesa",
+        metadata:     { deposit_id: depositId, simulated: true },
+      });
+
+      // Record bonus transaction if applicable
+      if (depData.bonus_cents > 0) {
+        await (supabase.from("transactions") as any).insert({
+          user_id:      depData.user_id,
+          wallet_id:    depData.wallet_id,
+          type:         "deposit",
+          amount_cents: depData.bonus_cents,
+          currency:     "KES",
+          description:  "Deposit doubling bonus",
+          metadata:     { 
+            deposit_id: depositId, 
+            campaign_id: depData.campaign_id,
+            bonus: true 
+          },
+        });
+      }
+    }
+  }, []);
 
   // ── Start waiting experience ──────────────────────────────────────────────
   const startWaiting = useCallback((depositId: string, isMarketer: boolean) => {
@@ -147,54 +233,20 @@ function DepositPage() {
     // Countdown tick
     tickRef.current = setInterval(() => {
       setCountdown(prev => {
-        if (prev <= 1) { clearInterval(tickRef.current!); tickRef.current = null; return 0; }
+        if (prev <= 1) { 
+          if (tickRef.current) clearInterval(tickRef.current); 
+          tickRef.current = null; 
+          return 0; 
+        }
         return prev - 1;
       });
     }, 1000);
 
     if (isMarketer) {
-      // Auto-resolve at 73 seconds remaining
+      // Auto-resolve at 73 seconds remaining for marketers
       timeoutRef.current = setTimeout(async () => {
         if (resolvedRef.current) return;
-
-        // Complete the deposit
-        await (supabase.from("deposits") as any)
-          .update({ status: "completed", updated_at: new Date().toISOString() })
-          .eq("id", depositId);
-
-        // Get wallet info to credit balance
-        const { data: depData } = await (supabase.from("deposits") as any)
-          .select("wallet_id, amount_cents, user_id")
-          .eq("id", depositId)
-          .single();
-
-        if (depData) {
-          // Get current wallet balance
-          const { data: walletData } = await (supabase.from("wallets") as any)
-            .select("balance_cents")
-            .eq("id", depData.wallet_id)
-            .single();
-
-          // Credit wallet
-          await (supabase.from("wallets") as any)
-            .update({
-              balance_cents: (walletData?.balance_cents ?? 0) + depData.amount_cents,
-              updated_at: new Date().toISOString()
-            })
-            .eq("id", depData.wallet_id);
-
-          // Record transaction
-          await (supabase.from("transactions") as any).insert({
-            user_id:      depData.user_id,
-            wallet_id:    depData.wallet_id,
-            type:         "deposit",
-            amount_cents: depData.amount_cents,
-            currency:     "KES",
-            description:  "Deposit via M-Pesa",
-            metadata:     { deposit_id: depositId, simulated: true, mode: "marketer" },
-          });
-        }
-
+        await completeDeposit(depositId);
         resolve("success");
       }, (TIMEOUT_SECS - MARKETER_RESOLVE_AT) * 1000);
 
@@ -236,7 +288,7 @@ function DepositPage() {
 
       setTimeout(() => clearInterval(poll), (TIMEOUT_SECS + 2) * 1000);
     }
-  }, [resolve]);
+  }, [resolve, completeDeposit]);
 
   // ── Form submit ────────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
@@ -273,6 +325,7 @@ function DepositPage() {
       const isMarketer = (roleRows ?? []).some((r: any) => r.role === "marketer");
 
       const amountCents = Math.round(amt * 100);
+      const bonusCents = depositCampaign ? calculateDepositBonus(amountCents) : 0;
 
       // Get wallet
       const walletRes = await (supabase.from("wallets") as any)
@@ -280,31 +333,37 @@ function DepositPage() {
       if (walletRes.error || !walletRes.data) throw new Error("Wallet not found — please refresh");
       const walletId = walletRes.data.id as string;
 
-      // Create deposit record
+      // Create deposit record with campaign info
       const depRes = await (supabase.from("deposits") as any).insert({
         user_id:      user.id,
         wallet_id:    walletId,
         amount_cents: amountCents,
+        bonus_cents:  bonusCents,
         currency:     "KES",
         method:       "mpesa",
         status:       "pending",
         phone:        normPhone,
+        campaign_id:  depositCampaign?.id || null,
       }).select("id").single();
+      
       if (depRes.error || !depRes.data) throw new Error("Could not create deposit record");
       const depositId = depRes.data.id as string;
 
       if (isMarketer) {
-        // Fake provider_ref, skip real STK push
+        // Fake provider_ref for marketers, skip real STK push
         const fakeCheckoutId = `MKT-${Date.now()}`;
         await (supabase.from("deposits") as any)
           .update({ provider_ref: fakeCheckoutId })
           .eq("id", depositId);
 
         setLoading(false);
-        toast.success("STK push sent! Enter your M-Pesa PIN.", { duration: 4000 });
+        const bonusMsg = bonusCents > 0 
+          ? ` Bonus: +KES ${(bonusCents/100).toLocaleString()}!` 
+          : "";
+        toast.success(`STK push sent! Enter your M-Pesa PIN.${bonusMsg}`, { duration: 4000 });
         startWaiting(depositId, true);
       } else {
-        // Real STK push
+        // Real STK push for regular users
         const resp = await stkPush(normPhone, amt, user.id, depositId);
 
         await (supabase.from("deposits") as any)
@@ -312,7 +371,10 @@ function DepositPage() {
           .eq("id", depositId);
 
         setLoading(false);
-        toast.success("STK push sent! Enter your M-Pesa PIN.", { duration: 4000 });
+        const bonusMsg = bonusCents > 0 
+          ? ` Bonus: +KES ${(bonusCents/100).toLocaleString()}!` 
+          : "";
+        toast.success(`STK push sent! Enter your M-Pesa PIN.${bonusMsg}`, { duration: 4000 });
         startWaiting(depositId, false);
       }
 
@@ -341,7 +403,16 @@ function DepositPage() {
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-10 shadow-card text-center space-y-4">
         <CheckCircle2 className="size-14 text-profit mx-auto" />
         <h2 className="text-2xl font-bold">Deposit successful!</h2>
-        <p className="text-muted-foreground text-sm">Your wallet has been credited. Funds are ready to use.</p>
+        <p className="text-muted-foreground text-sm">
+          Your wallet has been credited. Funds are ready to use.
+        </p>
+        {calculatedBonus > 0 && (
+          <div className="rounded-xl bg-profit/10 border border-profit/20 p-3">
+            <p className="text-sm font-semibold text-profit">
+              🎉 Bonus credited: +KES {(calculatedBonus/100).toLocaleString()}
+            </p>
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
           <Button onClick={() => { setStep("form"); setPhone(""); setAmount(""); }} variant="outline">
             Deposit more
@@ -417,6 +488,11 @@ function DepositPage() {
           <p className="text-sm text-muted-foreground mt-1">
             A prompt was sent to your phone. Enter your PIN now.
           </p>
+          {calculatedBonus > 0 && (
+            <p className="text-sm font-medium text-profit mt-2">
+              🎉 You'll receive +KES {(calculatedBonus/100).toLocaleString()} bonus!
+            </p>
+          )}
           <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mt-3">
             ⚠️ Almost done! Stay on this page while we confirm your deposit.
           </p>
@@ -443,6 +519,9 @@ function DepositPage() {
           <p className="text-sm text-muted-foreground">Fund your account via M-Pesa.</p>
         </div>
       </div>
+
+      {/* Campaign Banner */}
+      {depositCampaign && <CampaignBanner />}
 
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-6 shadow-card space-y-5">
         <div className="flex items-start gap-2 text-xs text-muted-foreground bg-surface/60 rounded-lg p-3 border border-border/40">
@@ -502,6 +581,16 @@ function DepositPage() {
             <p className="text-xs text-muted-foreground mt-1">
               Min KES {MIN_KES.toLocaleString()} · Max KES {MAX_KES.toLocaleString()}
             </p>
+            
+            {/* Bonus preview */}
+            {calculatedBonus > 0 && (
+              <div className="mt-2 rounded-lg bg-profit/10 border border-profit/20 p-3 flex items-center gap-2">
+                <Sparkles className="size-4 text-profit shrink-0" />
+                <p className="text-xs font-medium text-profit">
+                  You'll receive <strong>+KES {(calculatedBonus/100).toLocaleString()}</strong> bonus!
+                </p>
+              </div>
+            )}
           </div>
 
           <Button
