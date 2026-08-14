@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, ArrowDownToLine, ArrowUpFromLine,
   LineChart, Settings, FileText, ShieldCheck, Megaphone,
   HelpCircle, BarChart2, Menu, X, ChevronRight, Smartphone,
-  LogOut,
+  LogOut, Sparkles,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -33,10 +33,16 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: "Marketing",
+    items: [
+      { to: "/admin/campaigns", label: "Campaigns", icon: Sparkles },
+      { to: "/admin/announcements", label: "Announcements",  icon: Megaphone },
+    ],
+  },
+  {
     label: "Users",
     items: [
       { to: "/admin/users",         label: "All Users",      icon: Users },
-      { to: "/admin/announcements", label: "Announcements",  icon: Megaphone },
     ],
   },
   {
@@ -159,6 +165,7 @@ function AdminLayout() {
           </button>
         </div>
       </aside>
+
       {drawerOpen && (
         <div
           className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
