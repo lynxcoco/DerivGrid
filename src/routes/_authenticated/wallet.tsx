@@ -8,6 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { CampaignBanner } from "@/components/campaign-banner";
+import { ReferralBanner } from "@/components/referral-banner";
 
 export const Route = createFileRoute("/_authenticated/wallet")({
   head: () => ({ meta: [{ title: "Wallet · DerivGrid" }] }),
@@ -33,7 +35,7 @@ function maskPhoneInText(text: string): string {
   });
 }
 
-/** Strip a trailing multiplier like "— 3.18x" and capitalize "win"/"loss" (e.g. "Candle win — 3.18x" -> "Candle Win") */
+/** Strip a trailing multiplier like "— 3.18x" and capitalize "win"/"loss" */
 function stripMultiplier(text: string): string {
   return text
     .replace(/\s*[—-]\s*[\d.]+x\b/gi, "")
@@ -116,6 +118,10 @@ function WalletPage() {
         </Button>
       </div>
 
+      {/* Campaign Banners */}
+      <CampaignBanner />
+      <ReferralBanner />
+
       {/* Balance card */}
       <div className="relative rounded-2xl border border-primary/30 bg-gradient-surface shadow-glow overflow-hidden p-5">
         <div className="absolute inset-0 bg-gradient-glow opacity-30 pointer-events-none" aria-hidden />
@@ -184,7 +190,7 @@ function WalletPage() {
                         {isCredit ? "+" : "−"}{fmt(tx.amount_cents, tx.currency)}
                       </p>
                     </div>
-                    {/* Description below if present — with phone masking + multiplier stripped */}
+                    {/* Description below if present */}
                     {tx.description && (
                       <p className="text-[10px] text-muted-foreground mt-1.5 ml-11 leading-snug line-clamp-2">
                         {stripMultiplier(maskPhoneInText(tx.description))}
