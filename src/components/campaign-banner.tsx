@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useCampaigns } from "@/hooks/use-campaigns";
-import { Sparkles, Timer, TrendingUp, Zap } from "lucide-react";
+import { Sparkles, Timer, Zap } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 export function CampaignBanner() {
   const { getActiveCampaign } = useCampaigns();
@@ -27,7 +28,6 @@ export function CampaignBanner() {
         return;
       }
 
-      // Calculate total duration
       const start = campaign.starts_at ? new Date(campaign.starts_at) : new Date(campaign.created_at);
       const totalDuration = end.getTime() - start.getTime();
       const elapsed = now.getTime() - start.getTime();
@@ -61,14 +61,11 @@ export function CampaignBanner() {
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-primary/40 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent p-5 sm:p-6 shadow-card">
-      {/* Animated background pattern */}
       <div className="absolute inset-0 opacity-10 pointer-events-none">
         <div className="absolute -top-4 -right-4 size-32 rounded-full bg-primary/20 animate-pulse" />
-        <div className="absolute -bottom-8 -left-8 size-40 rounded-full bg-profit/10 animate-pulse delay-300" />
       </div>
       
       <div className="relative space-y-4">
-        {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="size-10 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
@@ -86,7 +83,6 @@ export function CampaignBanner() {
           </div>
         </div>
 
-        {/* Offer details */}
         <div className="bg-surface/50 rounded-xl p-3 border border-border/40">
           <p className="text-sm text-muted-foreground leading-relaxed">
             Deposit <strong className="text-foreground">KES {minDeposit.toLocaleString()}</strong> –{" "}
@@ -96,7 +92,6 @@ export function CampaignBanner() {
           </p>
         </div>
 
-        {/* Timer and progress */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2 font-medium">
@@ -107,39 +102,22 @@ export function CampaignBanner() {
             <span className="text-muted-foreground/60">{progress.toFixed(0)}% elapsed</span>
           </div>
           
-          {/* Progress bar */}
           <div className="relative h-2 rounded-full bg-surface overflow-hidden">
             <div 
               className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary via-profit to-primary rounded-full transition-all duration-1000 ease-linear"
-              style={{ 
-                width: `${progress}%`,
-                backgroundSize: '200% 100%',
-                animation: 'shimmer 2s infinite'
-              }}
+              style={{ width: `${progress}%` }}
             />
           </div>
         </div>
 
-        {/* CTA */}
-        <button
-          onClick={() => window.location.href = '/wallet/deposit'}
+        <Link
+          to="/wallet/deposit"
           className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-10 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
         >
           <Zap className="size-4" />
           Deposit Now
-        </button>
+        </Link>
       </div>
-
-      <style jsx>{`
-        @keyframes shimmer {
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
     </div>
   );
 }
