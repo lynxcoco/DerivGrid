@@ -531,8 +531,8 @@ function DepositPage() {
         </div>
       </div>
 
-      {/* Campaign Banner */}
-      <CampaignBanner />
+      {/* Campaign Banner - no CTA since user is already on deposit page */}
+      <CampaignBanner showCTA={false} />
 
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-6 shadow-card space-y-5">
         <div className="flex items-start gap-2 text-xs text-muted-foreground bg-surface/60 rounded-lg p-3 border border-border/40">
