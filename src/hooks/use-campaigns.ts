@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export type Campaign = {
@@ -17,15 +17,30 @@ export type Campaign = {
   updated_at: string;
 };
 
-export function useCampaigns() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+// Simple module-level cache to prevent multiple fetches
+let cachedCampaigns: Campaign[] | null = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 60 * 1000; // 1 minute
 
-  const loadCampaigns = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    
+export function useCampaigns() {
+  const [campaigns, setCampaigns] = useState<Campaign[]>(cachedCampaigns || []);
+  const [loading, setLoading] = useState(!cachedCampaigns);
+  const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  const loadCampaigns = useCallback(async (force = false) => {
+    // Check cache first
+    if (!force && cachedCampaigns && Date.now() - lastFetchTime < CACHE_DURATION) {
+      setCampaigns(cachedCampaigns);
+      setLoading(false);
+      return;
+    }
+
+    if (mountedRef.current) {
+      setLoading(true);
+      setError(null);
+    }
+
     try {
       const { data, error } = await supabase
         .from("campaigns")
@@ -35,62 +50,39 @@ export function useCampaigns() {
       if (error) throw error;
       
       if (data) {
-        setCampaigns(data as Campaign[]);
+        cachedCampaigns = data as Campaign[];
+        lastFetchTime = Date.now();
+        if (mountedRef.current) {
+          setCampaigns(data as Campaign[]);
+        }
       }
     } catch (error: any) {
       console.error("Error loading campaigns:", error);
-      setError(error?.message || "Failed to load campaigns");
-      // Keep existing campaigns if there was an error
-      setCampaigns(prev => prev);
+      if (mountedRef.current) {
+        setError(error?.message || "Failed to load campaigns");
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
+    
     // Initial load
     loadCampaigns();
     
-    // Set up realtime subscription with correct order
-    const channel = supabase
-      .channel('campaigns-changes')
-      .on(
-        'postgres_changes',
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'campaigns' 
-        },
-        (payload) => {
-          console.log('Campaign change detected:', payload.eventType);
-          // Reload campaigns when any change occurs
-          loadCampaigns();
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to campaign changes');
-        }
-        if (status === 'CHANNEL_ERROR') {
-          console.error('Failed to subscribe to campaign changes');
-          // Fallback to polling if realtime fails
-          const pollInterval = setInterval(() => {
-            loadCampaigns();
-          }, 30000); // Poll every 30 seconds
-          
-          // Store interval for cleanup
-          (window as any).__campaignPollInterval = pollInterval;
-        }
-      });
+    // Poll every 60 seconds instead of realtime
+    const interval = setInterval(() => {
+      loadCampaigns(true);
+    }, CACHE_DURATION);
     
-    // Cleanup function
+    // Cleanup
     return () => {
-      supabase.removeChannel(channel);
-      // Clear polling interval if it exists
-      if ((window as any).__campaignPollInterval) {
-        clearInterval((window as any).__campaignPollInterval);
-        delete (window as any).__campaignPollInterval;
-      }
+      mountedRef.current = false;
+      clearInterval(interval);
     };
   }, [loadCampaigns]);
 
