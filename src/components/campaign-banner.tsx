@@ -3,7 +3,11 @@ import { useCampaigns } from "@/hooks/use-campaigns";
 import { Sparkles, Timer, Zap } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
-export function CampaignBanner() {
+interface CampaignBannerProps {
+  showCTA?: boolean;
+}
+
+export function CampaignBanner({ showCTA = true }: CampaignBannerProps) {
   const { getActiveCampaign } = useCampaigns();
   const [campaign, setCampaign] = useState<any>(null);
   const [timeLeft, setTimeLeft] = useState<string>("");
@@ -117,17 +121,18 @@ export function CampaignBanner() {
           </div>
         </div>
 
-        <Link
-          to="/wallet/deposit"
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-10 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
-        >
-          <Zap className="size-4" />
-          Deposit Now
-        </Link>
+        {showCTA && (
+          <Link
+            to="/wallet/deposit"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-10 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
+          >
+            <Zap className="size-4" />
+            Deposit Now
+          </Link>
+        )}
       </div>
     </div>
   );
 }
 
-// Also add default export for safety
 export default CampaignBanner;
