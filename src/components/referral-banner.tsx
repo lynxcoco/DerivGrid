@@ -50,7 +50,7 @@ export function ReferralBanner() {
   if (!campaign) return null;
 
   const bonusAmount = campaign.referral_bonus_cents / 100;
-  const referralLink = `${window.location.origin}/signup?ref=${referralCode}`;
+  const referralLink = `${window.location.origin}/auth?ref=${referralCode}`;
 
   const copyLink = async () => {
     try {
@@ -132,3 +132,6 @@ export function ReferralBanner() {
     </div>
   );
 }
+
+// Also add default export for safety
+export default ReferralBanner;
