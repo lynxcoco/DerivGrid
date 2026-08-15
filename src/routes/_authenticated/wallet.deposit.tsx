@@ -27,7 +27,6 @@ function normalisePhone(raw: string): string {
   if (/^0(7|1)\d{8}$/.test(c))     return "254" + c.slice(1);
   if (/^(7|1)\d{8}$/.test(c))      return "254" + c;
   if (/^\+254(7|1)\d{8}$/.test(c)) return c.slice(1);
-  // Return as-is — validation below will reject invalid formats
   return c.replace(/\D/g, "");
 }
 
@@ -164,7 +163,7 @@ function DepositPage() {
     }
   }, [cleanup, calculatedBonus]);
 
-  // ── Complete deposit with bonus ────────────────────────────────────────────
+  // ── Complete deposit with bonus (UPDATED VERSION) ────────────────────────────
   const completeDeposit = useCallback(async (depositId: string) => {
     // Update deposit status
     await (supabase.from("deposits") as any)
@@ -178,15 +177,46 @@ function DepositPage() {
       .single();
 
     if (depData) {
+      let bonusToCredit = 0;
+      
+      // Check if bonus should be credited (campaign active)
+      if (depData.bonus_cents > 0 && depData.campaign_id) {
+        const { data: campaign } = await (supabase.from("campaigns") as any)
+          .select("is_active, starts_at, ends_at, max_bonus_cents")
+          .eq("id", depData.campaign_id)
+          .single();
+        
+        if (campaign) {
+          const now = new Date();
+          const isActive = campaign.is_active && 
+            (!campaign.starts_at || new Date(campaign.starts_at) <= now) &&
+            (!campaign.ends_at || new Date(campaign.ends_at) > now);
+          
+          if (isActive) {
+            bonusToCredit = Math.min(depData.bonus_cents, campaign.max_bonus_cents);
+          } else {
+            // Campaign not active, cancel bonus
+            await (supabase.from("campaign_bonuses") as any).insert({
+              campaign_id: depData.campaign_id,
+              user_id: depData.user_id,
+              deposit_id: depositId,
+              bonus_amount_cents: depData.bonus_cents,
+              status: 'cancelled',
+              metadata: { reason: 'Campaign not active at completion time' },
+            });
+          }
+        }
+      }
+      
       // Get current wallet balance
       const { data: walletData } = await (supabase.from("wallets") as any)
         .select("balance_cents")
         .eq("id", depData.wallet_id)
         .single();
 
-      const totalCredit = depData.amount_cents + (depData.bonus_cents || 0);
+      const totalCredit = depData.amount_cents + bonusToCredit;
 
-      // Credit wallet with deposit amount + bonus
+      // Credit wallet
       await (supabase.from("wallets") as any)
         .update({
           balance_cents: (walletData?.balance_cents ?? 0) + totalCredit,
@@ -205,13 +235,13 @@ function DepositPage() {
         metadata:     { deposit_id: depositId },
       });
 
-      // Record bonus transaction if applicable
-      if (depData.bonus_cents > 0) {
+      // Record bonus transaction if credited
+      if (bonusToCredit > 0) {
         await (supabase.from("transactions") as any).insert({
           user_id:      depData.user_id,
           wallet_id:    depData.wallet_id,
           type:         "deposit",
-          amount_cents: depData.bonus_cents,
+          amount_cents: bonusToCredit,
           currency:     "KES",
           description:  "Deposit doubling bonus",
           metadata:     { 
@@ -226,7 +256,7 @@ function DepositPage() {
           campaign_id: depData.campaign_id,
           user_id: depData.user_id,
           deposit_id: depositId,
-          bonus_amount_cents: depData.bonus_cents,
+          bonus_amount_cents: bonusToCredit,
           status: 'credited',
           credited_at: new Date().toISOString(),
         });
