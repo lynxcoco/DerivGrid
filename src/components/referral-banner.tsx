@@ -16,33 +16,37 @@ export function ReferralBanner() {
   }, []);
 
   const loadReferralData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-    // Load referral code
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("referral_code")
-      .eq("id", user.id)
-      .single();
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("referral_code")
+        .eq("id", user.id)
+        .single();
 
-    if (profile?.referral_code) {
-      setReferralCode(profile.referral_code);
-    }
+      if (profile?.referral_code) {
+        setReferralCode(profile.referral_code);
+      }
 
-    // Load referral count
-    const { data: referrals } = await supabase
-      .from("referrals")
-      .select("id")
-      .eq("referrer_id", user.id)
-      .eq("status", "completed");
+      // Only try to load referrals if the table exists
+      const { data: referrals, error } = await supabase
+        .from("referrals")
+        .select("id")
+        .eq("referrer_id", user.id)
+        .eq("status", "completed");
 
-    if (referrals) {
-      setReferralCount(referrals.length);
+      if (!error && referrals) {
+        setReferralCount(referrals.length);
+      }
+    } catch (error) {
+      console.error("Error loading referral data:", error);
     }
   };
 
   const campaign = getActiveCampaign('referral_bonus');
+  
   if (!campaign) return null;
 
   const bonusAmount = campaign.referral_bonus_cents / 100;
@@ -92,7 +96,6 @@ export function ReferralBanner() {
         </div>
       </div>
 
-      {/* Referral stats */}
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <Users className="size-3.5" />
@@ -100,7 +103,6 @@ export function ReferralBanner() {
         </div>
       </div>
 
-      {/* Referral link */}
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <div className="flex-1 px-3 py-2 rounded-lg bg-surface border border-border/40 text-xs font-mono truncate">
