@@ -32,7 +32,9 @@ export function CampaignBanner() {
       const totalDuration = end.getTime() - start.getTime();
       const elapsed = now.getTime() - start.getTime();
       
-      setProgress(Math.max(0, Math.min(100, (elapsed / totalDuration) * 100)));
+      // Progress starts at 100% and decreases to 0%
+      const remaining = Math.max(0, Math.min(100, 100 - (elapsed / totalDuration) * 100));
+      setProgress(remaining);
 
       const days = Math.floor(diff / (1000 * 60 * 60 * 24));
       const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -58,6 +60,13 @@ export function CampaignBanner() {
   const minDeposit = campaign.min_deposit_cents / 100;
   const maxDeposit = campaign.max_deposit_cents / 100;
   const maxBonus = campaign.max_bonus_cents / 100;
+
+  // Calculate color based on remaining progress
+  const getProgressColor = () => {
+    if (progress > 50) return "bg-profit"; // Green
+    if (progress > 25) return "bg-warning"; // Yellow/Orange
+    return "bg-loss"; // Red
+  };
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-primary/40 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent p-5 sm:p-6 shadow-card">
@@ -86,25 +95,23 @@ export function CampaignBanner() {
         <div className="bg-surface/50 rounded-xl p-3 border border-border/40">
           <p className="text-sm text-muted-foreground leading-relaxed">
             Deposit <strong className="text-foreground">KES {minDeposit.toLocaleString()}</strong> –{" "}
-            <strong className="text-foreground">KES {maxDeposit.toLocaleString()}</strong> and we match it{" "}
-            <strong className="text-profit">100%</strong> — your money doubles instantly!{" "}
+            <strong className="text-foreground">KES {maxDeposit.toLocaleString()}</strong> and{" "}
+            <strong className="text-profit">You get double of your deposit amount instantly!</strong>{" "}
             Maximum bonus <strong className="text-foreground">KES {maxBonus.toLocaleString()}</strong>.
           </p>
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2 font-medium">
-              <Timer className="size-4 text-primary" />
-              <span className="text-muted-foreground">Ends in:</span>
-              <span className="font-mono font-bold text-primary">{timeLeft}</span>
-            </div>
-            <span className="text-muted-foreground/60">{progress.toFixed(0)}% elapsed</span>
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <Timer className="size-4 text-primary" />
+            <span className="text-muted-foreground">Ends in:</span>
+            <span className="font-mono font-bold text-primary">{timeLeft}</span>
           </div>
           
+          {/* Countdown progress bar - starts full and empties */}
           <div className="relative h-2 rounded-full bg-surface overflow-hidden">
             <div 
-              className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary via-profit to-primary rounded-full transition-all duration-1000 ease-linear"
+              className={`absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-linear ${getProgressColor()}`}
               style={{ width: `${progress}%` }}
             />
           </div>
