@@ -8,7 +8,7 @@ import { CampaignBanner } from "@/components/campaign-banner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, Loader2, ArrowLeft, Info, Eye, EyeOff, Sparkles, Gift } from "lucide-react";
+import { CheckCircle2, Loader2, ArrowLeft, Info, Eye, EyeOff, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/wallet/deposit")({
   head: () => ({ meta: [{ title: "Deposit · DerivGrid" }] }),
@@ -27,10 +27,11 @@ function normalisePhone(raw: string): string {
   if (/^0(7|1)\d{8}$/.test(c))     return "254" + c.slice(1);
   if (/^(7|1)\d{8}$/.test(c))      return "254" + c;
   if (/^\+254(7|1)\d{8}$/.test(c)) return c.slice(1);
+  // Return as-is — validation below will reject invalid formats
   return c.replace(/\D/g, "");
 }
 
-/** Mask digits at positions 4-6 with *** */
+/** Mask digits at positions 4-6 (the "middle three") with *** */
 function maskMiddle(digits: string): string {
   const chars = digits.split("");
   for (let i = 4; i < Math.min(chars.length, 7); i++) {
@@ -201,7 +202,7 @@ function DepositPage() {
         amount_cents: depData.amount_cents,
         currency:     "KES",
         description:  "Deposit via M-Pesa",
-        metadata:     { deposit_id: depositId, simulated: true },
+        metadata:     { deposit_id: depositId },
       });
 
       // Record bonus transaction if applicable
@@ -218,6 +219,16 @@ function DepositPage() {
             campaign_id: depData.campaign_id,
             bonus: true 
           },
+        });
+
+        // Record in campaign_bonuses
+        await (supabase.from("campaign_bonuses") as any).insert({
+          campaign_id: depData.campaign_id,
+          user_id: depData.user_id,
+          deposit_id: depositId,
+          bonus_amount_cents: depData.bonus_cents,
+          status: 'credited',
+          credited_at: new Date().toISOString(),
         });
       }
     }
@@ -521,7 +532,7 @@ function DepositPage() {
       </div>
 
       {/* Campaign Banner */}
-      {depositCampaign && <CampaignBanner />}
+      <CampaignBanner />
 
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-6 shadow-card space-y-5">
         <div className="flex items-start gap-2 text-xs text-muted-foreground bg-surface/60 rounded-lg p-3 border border-border/40">
