@@ -98,7 +98,7 @@ export function CampaignBanner({ showCTA = true }: CampaignBannerProps) {
 
         <div className="bg-surface/50 rounded-xl p-3 border border-border/40">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Deposit <strong className="text-foreground">more than KES {minDeposit.toLocaleString()}</strong> and{" "}
+            Deposit more than<strong className="text-foreground">KES {minDeposit.toLocaleString()}</strong> and{" "}
             <strong className="text-profit">You get double of your deposit amount instantly!</strong>{" "}
             Maximum bonus <strong className="text-foreground">KES {maxBonus.toLocaleString()}</strong>.
           </p>
