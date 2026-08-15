@@ -11,11 +11,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Logo } from "@/components/brand/Logo";
 import { supabase } from "@/integrations/supabase/client";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, Gift } from "lucide-react";
 
 const authSearchSchema = z.object({
   tab: z.enum(["login", "register"]).optional().catch("login"),
   redirect: z.string().optional(),
+  ref: z.string().optional(),
 });
 
 export const Route = createFileRoute("/auth")({
@@ -70,10 +71,72 @@ function friendlyAuthError(message: string): string {
   return message;
 }
 
+// Process referral code after signup
+async function processReferral(userId: string, referralCode: string) {
+  try {
+    // Normalize the referral code
+    const normalizedCode = referralCode.trim().toUpperCase();
+    
+    // Find the referrer by their referral code
+    const { data: referrer, error: referrerError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("referral_code", normalizedCode)
+      .single();
+
+    if (referrerError || !referrer) {
+      console.warn("[referral] Referrer not found for code:", normalizedCode);
+      return;
+    }
+
+    // Prevent self-referral
+    if (referrer.id === userId) {
+      console.warn("[referral] Self-referral attempt blocked");
+      return;
+    }
+
+    // Check if referral already exists
+    const { data: existingReferral } = await supabase
+      .from("referrals")
+      .select("id")
+      .eq("referred_id", userId)
+      .maybeSingle();
+
+    if (existingReferral) {
+      console.log("[referral] Referral already exists for this user");
+      return;
+    }
+
+    // Create referral record
+    const { error: insertError } = await supabase
+      .from("referrals")
+      .insert({
+        referrer_id: referrer.id,
+        referred_id: userId,
+        referral_code: normalizedCode,
+        status: "pending",
+      });
+
+    if (insertError) {
+      console.error("[referral] Failed to create referral:", insertError.message);
+      return;
+    }
+
+    console.log("[referral] Referral created successfully");
+    toast.success("Referral bonus will be credited after your first deposit!", {
+      duration: 5000,
+    });
+  } catch (error) {
+    console.error("[referral] Error processing referral:", error);
+  }
+}
+
 function AuthPage() {
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"login" | "register">(search.tab ?? "login");
+  const [tab, setTab] = useState<"login" | "register">(
+    search.ref ? "register" : (search.tab ?? "login")
+  );
 
   const onAuthed = async () => {
     if (search.redirect) {
@@ -191,6 +254,15 @@ function AuthPage() {
             <Logo size="lg" />
           </div>
 
+          {search.ref && (
+            <div className="mb-4 rounded-xl bg-profit/10 border border-profit/20 px-4 py-3 flex items-center gap-2">
+              <Gift className="size-4 text-profit shrink-0" />
+              <p className="text-xs font-medium text-profit">
+                You've been referred! Create an account to earn your bonus after your first deposit.
+              </p>
+            </div>
+          )}
+
           <Tabs value={tab} onValueChange={(v) => setTab(v as "login" | "register")}>
             <TabsList className="grid grid-cols-2 w-full">
               <TabsTrigger value="login">Sign in</TabsTrigger>
@@ -201,7 +273,11 @@ function AuthPage() {
               <LoginForm onSuccess={onAuthed} onGoogle={handleGoogle} />
             </TabsContent>
             <TabsContent value="register" className="mt-6">
-              <RegisterForm onSuccess={onAuthed} onGoogle={handleGoogle} />
+              <RegisterForm 
+                onSuccess={onAuthed} 
+                onGoogle={handleGoogle} 
+                referralCode={search.ref}
+              />
             </TabsContent>
           </Tabs>
 
@@ -317,7 +393,11 @@ function LoginForm({ onSuccess, onGoogle }: { onSuccess: () => void; onGoogle: (
   );
 }
 
-function RegisterForm({ onSuccess, onGoogle }: { onSuccess: () => void; onGoogle: () => void }) {
+function RegisterForm({ onSuccess, onGoogle, referralCode }: { 
+  onSuccess: () => void; 
+  onGoogle: () => void;
+  referralCode?: string;
+}) {
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
   const form = useForm<z.infer<typeof registerSchema>>({
@@ -354,6 +434,11 @@ function RegisterForm({ onSuccess, onGoogle }: { onSuccess: () => void; onGoogle
       if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
         toast.error("This email is already registered. Sign in instead, or use the Google button if that's how you joined.");
         return;
+      }
+
+      // Process referral code if present
+      if (data.user && referralCode) {
+        await processReferral(data.user.id, referralCode);
       }
 
       toast.success("Account created — welcome to DerivGrid!");
