@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { ASSETS, tick, type Tick } from "@/lib/market-simulator";
 import { useRole } from "@/hooks/use-role";
+import { CampaignBanner } from "@/components/campaign-banner";
+import { ReferralBanner } from "@/components/referral-banner";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard · DerivGrid" }] }),
@@ -301,6 +303,10 @@ function Dashboard() {
           </Button>
         </div>
       </div>
+
+      {/* ─── Campaign Banners ─────────────────────────────────────────── */}
+      <CampaignBanner />
+      <ReferralBanner />
 
       {/* ─── Admin Banner (admins only) ──────────────────────────────────── */}
       {isAdmin && (
