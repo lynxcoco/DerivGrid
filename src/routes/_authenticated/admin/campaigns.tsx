@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,8 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Calendar, Clock, DollarSign, Gift, Save, Sparkles, Timer, TrendingUp, Users, ArrowLeft } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { 
+  Calendar, 
+  Clock, 
+  DollarSign, 
+  Gift, 
+  Save, 
+  Sparkles, 
+  Timer, 
+  TrendingUp, 
+  Users, 
+  ArrowLeft,
+  Loader2,
+  AlertCircle
+} from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/admin/campaigns")({
   head: () => ({ meta: [{ title: "Campaigns · Admin" }] }),
@@ -16,8 +28,9 @@ export const Route = createFileRoute("/_authenticated/admin/campaigns")({
 });
 
 function CampaignManagement() {
-  const { campaigns, loading, loadCampaigns } = useCampaigns();
-  const [saving, setSaving] = useState(false);
+  const { campaigns, loading, loadCampaigns, error } = useCampaigns();
+  const [savingDeposit, setSavingDeposit] = useState(false);
+  const [savingReferral, setSavingReferral] = useState(false);
   
   // Deposit Double Campaign State
   const [ddActive, setDdActive] = useState(false);
@@ -57,75 +70,120 @@ function CampaignManagement() {
     }
   };
 
-  const saveCampaign = async (type: 'deposit_double' | 'referral_bonus') => {
-    setSaving(true);
+  const saveDepositCampaign = async () => {
+    setSavingDeposit(true);
     try {
+      // Validate inputs
+      const minDep = parseFloat(ddMinDeposit);
+      const maxDep = parseFloat(ddMaxDeposit);
+      const bonusPct = parseFloat(ddBonusPercent);
+      const maxBonus = parseFloat(ddMaxBonus);
+      
+      if (isNaN(minDep) || minDep <= 0) {
+        toast.error("Minimum deposit must be greater than 0");
+        return;
+      }
+      if (isNaN(maxDep) || maxDep < minDep) {
+        toast.error("Maximum deposit must be greater than minimum");
+        return;
+      }
+      if (isNaN(bonusPct) || bonusPct <= 0 || bonusPct > 500) {
+        toast.error("Bonus percentage must be between 1-500%");
+        return;
+      }
+      if (isNaN(maxBonus) || maxBonus <= 0) {
+        toast.error("Maximum bonus must be greater than 0");
+        return;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser();
       
-      if (type === 'deposit_double') {
-        // Validate inputs
-        const minDep = parseFloat(ddMinDeposit);
-        const maxDep = parseFloat(ddMaxDeposit);
-        const bonusPct = parseFloat(ddBonusPercent);
-        const maxBonus = parseFloat(ddMaxBonus);
+      const existingCampaign = campaigns.find(c => c.type === 'deposit_double');
+      
+      const campaignData = {
+        type: 'deposit_double',
+        name: 'Deposit Doubling',
+        is_active: ddActive,
+        min_deposit_cents: Math.round(minDep * 100),
+        max_deposit_cents: Math.round(maxDep * 100),
+        bonus_percentage: bonusPct,
+        max_bonus_cents: Math.round(maxBonus * 100),
+        starts_at: ddStartTime ? new Date(ddStartTime).toISOString() : new Date().toISOString(),
+        ends_at: ddEndTime ? new Date(ddEndTime).toISOString() : null,
+        updated_at: new Date().toISOString(),
+        created_by: user?.id,
+      };
+      
+      if (existingCampaign) {
+        const { error } = await supabase
+          .from("campaigns")
+          .update(campaignData)
+          .eq("id", existingCampaign.id);
         
-        if (isNaN(minDep) || minDep < 0) throw new Error("Invalid minimum deposit");
-        if (isNaN(maxDep) || maxDep < minDep) throw new Error("Invalid maximum deposit");
-        if (isNaN(bonusPct) || bonusPct < 0 || bonusPct > 500) throw new Error("Bonus percentage must be between 0-500%");
-        if (isNaN(maxBonus) || maxBonus < 0) throw new Error("Invalid maximum bonus");
-        
-        const existingCampaign = campaigns.find(c => c.type === 'deposit_double');
-        
-        const campaignData = {
-          type: 'deposit_double',
-          name: 'Deposit Doubling',
-          is_active: ddActive,
-          min_deposit_cents: Math.round(minDep * 100),
-          max_deposit_cents: Math.round(maxDep * 100),
-          bonus_percentage: bonusPct,
-          max_bonus_cents: Math.round(maxBonus * 100),
-          starts_at: ddStartTime ? new Date(ddStartTime).toISOString() : new Date().toISOString(),
-          ends_at: ddEndTime ? new Date(ddEndTime).toISOString() : null,
-          updated_at: new Date().toISOString(),
-          created_by: user?.id,
-        };
-        
-        if (existingCampaign) {
-          await supabase.from("campaigns").update(campaignData).eq("id", existingCampaign.id);
-        } else {
-          const { data, error } = await supabase.from("campaigns").insert(campaignData).select();
-          if (error) throw error;
-        }
+        if (error) throw error;
       } else {
-        // Referral campaign
-        const bonus = parseFloat(refBonus);
-        if (isNaN(bonus) || bonus < 0) throw new Error("Invalid referral bonus");
+        const { error } = await supabase
+          .from("campaigns")
+          .insert(campaignData);
         
-        const existingCampaign = campaigns.find(c => c.type === 'referral_bonus');
-        
-        const campaignData = {
-          type: 'referral_bonus',
-          name: 'Referral Bonus',
-          is_active: refActive,
-          referral_bonus_cents: Math.round(bonus * 100),
-          updated_at: new Date().toISOString(),
-          created_by: user?.id,
-        };
-        
-        if (existingCampaign) {
-          await supabase.from("campaigns").update(campaignData).eq("id", existingCampaign.id);
-        } else {
-          const { data, error } = await supabase.from("campaigns").insert(campaignData).select();
-          if (error) throw error;
-        }
+        if (error) throw error;
       }
 
-      toast.success(`${type === 'deposit_double' ? 'Deposit doubling' : 'Referral bonus'} campaign saved!`);
+      toast.success("Deposit doubling campaign saved successfully!");
       await loadCampaigns();
     } catch (error: any) {
-      toast.error(error?.message || "Failed to save campaign");
+      console.error("Save deposit campaign error:", error);
+      toast.error(error?.message || "Failed to save deposit campaign");
     } finally {
-      setSaving(false);
+      setSavingDeposit(false);
+    }
+  };
+
+  const saveReferralCampaign = async () => {
+    setSavingReferral(true);
+    try {
+      const bonus = parseFloat(refBonus);
+      
+      if (isNaN(bonus) || bonus <= 0) {
+        toast.error("Referral bonus must be greater than 0");
+        return;
+      }
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const existingCampaign = campaigns.find(c => c.type === 'referral_bonus');
+      
+      const campaignData = {
+        type: 'referral_bonus',
+        name: 'Referral Bonus',
+        is_active: refActive,
+        referral_bonus_cents: Math.round(bonus * 100),
+        updated_at: new Date().toISOString(),
+        created_by: user?.id,
+      };
+      
+      if (existingCampaign) {
+        const { error } = await supabase
+          .from("campaigns")
+          .update(campaignData)
+          .eq("id", existingCampaign.id);
+        
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("campaigns")
+          .insert(campaignData);
+        
+        if (error) throw error;
+      }
+
+      toast.success("Referral bonus campaign saved successfully!");
+      await loadCampaigns();
+    } catch (error: any) {
+      console.error("Save referral campaign error:", error);
+      toast.error(error?.message || "Failed to save referral campaign");
+    } finally {
+      setSavingReferral(false);
     }
   };
 
@@ -141,12 +199,29 @@ function CampaignManagement() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="p-4 sm:p-6 lg:p-8 max-w-2xl mx-auto">
+        <div className="rounded-2xl border border-warning/40 bg-warning/10 p-6 text-center">
+          <AlertCircle className="size-10 text-warning mx-auto mb-3" />
+          <h2 className="text-lg font-semibold mb-2">Failed to load campaigns</h2>
+          <p className="text-sm text-muted-foreground mb-4">{error}</p>
+          <Button onClick={loadCampaigns} variant="outline">
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 pb-12 space-y-5 max-w-2xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" asChild className="p-0 size-9">
-          <Link to="/admin"><ArrowLeft className="size-4" /></Link>
+          <Link to="/admin/overview">
+            <ArrowLeft className="size-4" />
+          </Link>
         </Button>
         <div>
           <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
@@ -249,12 +324,21 @@ function CampaignManagement() {
           </div>
 
           <Button 
-            onClick={() => saveCampaign('deposit_double')}
-            disabled={saving}
+            onClick={saveDepositCampaign}
+            disabled={savingDeposit}
             className="w-full sm:w-auto h-10 px-6 bg-gradient-primary shadow-glow hover:opacity-95"
           >
-            <Save className="size-4 mr-2" />
-            Save Deposit Campaign
+            {savingDeposit ? (
+              <>
+                <Loader2 className="size-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="size-4 mr-2" />
+                Save Deposit Campaign
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -292,12 +376,21 @@ function CampaignManagement() {
           </div>
 
           <Button 
-            onClick={() => saveCampaign('referral_bonus')}
-            disabled={saving}
+            onClick={saveReferralCampaign}
+            disabled={savingReferral}
             className="w-full sm:w-auto h-10 px-6 bg-gradient-primary shadow-glow hover:opacity-95"
           >
-            <Save className="size-4 mr-2" />
-            Save Referral Campaign
+            {savingReferral ? (
+              <>
+                <Loader2 className="size-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="size-4 mr-2" />
+                Save Referral Campaign
+              </>
+            )}
           </Button>
         </div>
       </div>
