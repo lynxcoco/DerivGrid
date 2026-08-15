@@ -1,129 +1,133 @@
 import { useEffect, useState } from "react";
 import { useCampaigns } from "@/hooks/use-campaigns";
-import { Sparkles, Timer, Zap } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Copy, Check, Gift, Share2, Users } from "lucide-react";
+import { toast } from "sonner";
 
-export function CampaignBanner() {
+export function ReferralBanner() {
   const { getActiveCampaign } = useCampaigns();
-  const [campaign, setCampaign] = useState<any>(null);
-  const [timeLeft, setTimeLeft] = useState<string>("");
-  const [progress, setProgress] = useState(100);
+  const [copied, setCopied] = useState(false);
+  const [referralCode, setReferralCode] = useState("");
+  const [referralCount, setReferralCount] = useState(0);
 
   useEffect(() => {
-    const active = getActiveCampaign('deposit_double');
-    setCampaign(active);
-  }, [getActiveCampaign]);
+    loadReferralData();
+  }, []);
 
-  useEffect(() => {
-    if (!campaign?.ends_at) return;
+  const loadReferralData = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-    const updateTimer = () => {
-      const now = new Date();
-      const end = new Date(campaign.ends_at);
-      const diff = end.getTime() - now.getTime();
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("referral_code")
+        .eq("id", user.id)
+        .single();
 
-      if (diff <= 0) {
-        setTimeLeft("Ended");
-        setProgress(0);
-        return;
+      if (profile?.referral_code) {
+        setReferralCode(profile.referral_code);
       }
 
-      const start = campaign.starts_at ? new Date(campaign.starts_at) : new Date(campaign.created_at);
-      const totalDuration = end.getTime() - start.getTime();
-      const elapsed = now.getTime() - start.getTime();
-      
-      // Progress starts at 100% and decreases to 0%
-      const remaining = Math.max(0, Math.min(100, 100 - (elapsed / totalDuration) * 100));
-      setProgress(remaining);
+      // Only try to load referrals if the table exists
+      const { data: referrals, error } = await supabase
+        .from("referrals")
+        .select("id")
+        .eq("referrer_id", user.id)
+        .eq("status", "completed");
 
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      if (days > 0) {
-        setTimeLeft(`${days}d ${hours}h ${minutes}m`);
-      } else if (hours > 0) {
-        setTimeLeft(`${hours}h ${minutes}m ${seconds}s`);
-      } else {
-        setTimeLeft(`${minutes}m ${seconds}s`);
+      if (!error && referrals) {
+        setReferralCount(referrals.length);
       }
-    };
+    } catch (error) {
+      console.error("Error loading referral data:", error);
+    }
+  };
 
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [campaign?.ends_at, campaign?.starts_at, campaign?.created_at]);
-
+  const campaign = getActiveCampaign('referral_bonus');
+  
   if (!campaign) return null;
 
-  const minDeposit = campaign.min_deposit_cents / 100;
-  const maxDeposit = campaign.max_deposit_cents / 100;
-  const maxBonus = campaign.max_bonus_cents / 100;
+  const bonusAmount = campaign.referral_bonus_cents / 100;
+  const referralLink = `${window.location.origin}/signup?ref=${referralCode}`;
 
-  // Calculate color based on remaining progress
-  const getProgressColor = () => {
-    if (progress > 50) return "bg-profit"; // Green
-    if (progress > 25) return "bg-warning"; // Yellow/Orange
-    return "bg-loss"; // Red
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(referralLink);
+      setCopied(true);
+      toast.success("Referral link copied!");
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      toast.error("Failed to copy link");
+    }
+  };
+
+  const shareLink = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Join DerivGrid',
+          text: `Join DerivGrid and get KES ${bonusAmount} bonus! Use my referral link:`,
+          url: referralLink,
+        });
+      } catch (error) {
+        console.log('Share cancelled');
+      }
+    } else {
+      copyLink();
+    }
   };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-primary/40 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent p-5 sm:p-6 shadow-card">
-      <div className="absolute inset-0 opacity-10 pointer-events-none">
-        <div className="absolute -top-4 -right-4 size-32 rounded-full bg-primary/20 animate-pulse" />
-      </div>
-      
-      <div className="relative space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="size-10 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
-              <Sparkles className="size-5 text-primary" />
-            </span>
-            <div>
-              <h3 className="font-bold text-base sm:text-lg leading-tight">
-                Deposit Doubling is LIVE!
-              </h3>
-              <span className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full bg-profit/15 text-profit text-xs font-semibold">
-                <span className="size-1.5 rounded-full bg-profit animate-pulse" />
-                ACTIVE
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-surface/50 rounded-xl p-3 border border-border/40">
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Deposit <strong className="text-foreground">KES {minDeposit.toLocaleString()}</strong> –{" "}
-            <strong className="text-foreground">KES {maxDeposit.toLocaleString()}</strong> and{" "}
-            <strong className="text-profit">You get double of your deposit amount instantly!</strong>{" "}
-            Maximum bonus <strong className="text-foreground">KES {maxBonus.toLocaleString()}</strong>.
+    <div className="rounded-2xl border border-border/60 bg-gradient-surface p-5 space-y-4 shadow-card">
+      <div className="flex items-start gap-3">
+        <span className="size-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+          <Gift className="size-5 text-primary" />
+        </span>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-sm sm:text-base">
+            Referral Bonus — Earn KES {bonusAmount} per friend!
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            Share your personal link. When a friend signs up and makes their first deposit, 
+            you both win — you get KES {bonusAmount} credited instantly.
           </p>
         </div>
+      </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium">
-            <Timer className="size-4 text-primary" />
-            <span className="text-muted-foreground">Ends in:</span>
-            <span className="font-mono font-bold text-primary">{timeLeft}</span>
-          </div>
-          
-          {/* Countdown progress bar - starts full and empties */}
-          <div className="relative h-2 rounded-full bg-surface overflow-hidden">
-            <div 
-              className={`absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-linear ${getProgressColor()}`}
-              style={{ width: `${progress}%` }}
-            />
-          </div>
+      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <Users className="size-3.5" />
+          <span>{referralCount} friends referred</span>
         </div>
+      </div>
 
-        <Link
-          to="/wallet/deposit"
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-10 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 px-3 py-2 rounded-lg bg-surface border border-border/40 text-xs font-mono truncate">
+            {referralLink}
+          </div>
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={copyLink}
+            className="shrink-0 h-9"
+          >
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+            <span className="ml-1.5">{copied ? "Copied!" : "Copy"}</span>
+          </Button>
+        </div>
+        
+        <Button 
+          size="sm"
+          variant="ghost"
+          onClick={shareLink}
+          className="w-full"
         >
-          <Zap className="size-4" />
-          Deposit Now
-        </Link>
+          <Share2 className="size-3.5 mr-1.5" />
+          Share now
+        </Button>
       </div>
     </div>
   );
