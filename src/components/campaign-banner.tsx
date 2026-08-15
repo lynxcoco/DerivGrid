@@ -86,7 +86,7 @@ export function CampaignBanner({ showCTA = true }: CampaignBannerProps) {
             </span>
             <div>
               <h3 className="font-bold text-base sm:text-lg leading-tight">
-                Deposit Doubling is LIVE!
+                Deposit Doubling Promo is LIVE!
               </h3>
               <span className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full bg-profit/15 text-profit text-xs font-semibold">
                 <span className="size-1.5 rounded-full bg-profit animate-pulse" />
