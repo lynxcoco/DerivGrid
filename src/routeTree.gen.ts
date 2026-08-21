@@ -37,6 +37,7 @@ import { Route as AuthenticatedAdminPlatformSettingsRouteImport } from './routes
 import { Route as AuthenticatedAdminPaymentConfigRouteImport } from './routes/_authenticated/admin/payment-config'
 import { Route as AuthenticatedAdminOverviewRouteImport } from './routes/_authenticated/admin/overview'
 import { Route as AuthenticatedAdminDepositsRouteImport } from './routes/_authenticated/admin/deposits'
+import { Route as AuthenticatedAdminCampaignsRouteImport } from './routes/_authenticated/admin/campaigns'
 import { Route as AuthenticatedAdminAuditRouteImport } from './routes/_authenticated/admin/audit'
 import { Route as AuthenticatedAdminAssetsRouteImport } from './routes/_authenticated/admin/assets'
 import { Route as AuthenticatedAdminAnnouncementsRouteImport } from './routes/_authenticated/admin/announcements'
@@ -192,6 +193,12 @@ const AuthenticatedAdminDepositsRoute =
     path: '/deposits',
     getParentRoute: () => AuthenticatedAdminRouteRoute,
   } as any)
+const AuthenticatedAdminCampaignsRoute =
+  AuthenticatedAdminCampaignsRouteImport.update({
+    id: '/campaigns',
+    path: '/campaigns',
+    getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
 const AuthenticatedAdminAuditRoute = AuthenticatedAdminAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
@@ -230,6 +237,7 @@ export interface FileRoutesByFullPath {
   '/admin/announcements': typeof AuthenticatedAdminAnnouncementsRoute
   '/admin/assets': typeof AuthenticatedAdminAssetsRoute
   '/admin/audit': typeof AuthenticatedAdminAuditRoute
+  '/admin/campaigns': typeof AuthenticatedAdminCampaignsRoute
   '/admin/deposits': typeof AuthenticatedAdminDepositsRoute
   '/admin/overview': typeof AuthenticatedAdminOverviewRoute
   '/admin/payment-config': typeof AuthenticatedAdminPaymentConfigRoute
@@ -262,6 +270,7 @@ export interface FileRoutesByTo {
   '/admin/announcements': typeof AuthenticatedAdminAnnouncementsRoute
   '/admin/assets': typeof AuthenticatedAdminAssetsRoute
   '/admin/audit': typeof AuthenticatedAdminAuditRoute
+  '/admin/campaigns': typeof AuthenticatedAdminCampaignsRoute
   '/admin/deposits': typeof AuthenticatedAdminDepositsRoute
   '/admin/overview': typeof AuthenticatedAdminOverviewRoute
   '/admin/payment-config': typeof AuthenticatedAdminPaymentConfigRoute
@@ -296,6 +305,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/announcements': typeof AuthenticatedAdminAnnouncementsRoute
   '/_authenticated/admin/assets': typeof AuthenticatedAdminAssetsRoute
   '/_authenticated/admin/audit': typeof AuthenticatedAdminAuditRoute
+  '/_authenticated/admin/campaigns': typeof AuthenticatedAdminCampaignsRoute
   '/_authenticated/admin/deposits': typeof AuthenticatedAdminDepositsRoute
   '/_authenticated/admin/overview': typeof AuthenticatedAdminOverviewRoute
   '/_authenticated/admin/payment-config': typeof AuthenticatedAdminPaymentConfigRoute
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/admin/announcements'
     | '/admin/assets'
     | '/admin/audit'
+    | '/admin/campaigns'
     | '/admin/deposits'
     | '/admin/overview'
     | '/admin/payment-config'
@@ -362,6 +373,7 @@ export interface FileRouteTypes {
     | '/admin/announcements'
     | '/admin/assets'
     | '/admin/audit'
+    | '/admin/campaigns'
     | '/admin/deposits'
     | '/admin/overview'
     | '/admin/payment-config'
@@ -395,6 +407,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/announcements'
     | '/_authenticated/admin/assets'
     | '/_authenticated/admin/audit'
+    | '/_authenticated/admin/campaigns'
     | '/_authenticated/admin/deposits'
     | '/_authenticated/admin/overview'
     | '/_authenticated/admin/payment-config'
@@ -615,6 +628,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminDepositsRouteImport
       parentRoute: typeof AuthenticatedAdminRouteRoute
     }
+    '/_authenticated/admin/campaigns': {
+      id: '/_authenticated/admin/campaigns'
+      path: '/campaigns'
+      fullPath: '/admin/campaigns'
+      preLoaderRoute: typeof AuthenticatedAdminCampaignsRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
     '/_authenticated/admin/audit': {
       id: '/_authenticated/admin/audit'
       path: '/audit'
@@ -643,6 +663,7 @@ interface AuthenticatedAdminRouteRouteChildren {
   AuthenticatedAdminAnnouncementsRoute: typeof AuthenticatedAdminAnnouncementsRoute
   AuthenticatedAdminAssetsRoute: typeof AuthenticatedAdminAssetsRoute
   AuthenticatedAdminAuditRoute: typeof AuthenticatedAdminAuditRoute
+  AuthenticatedAdminCampaignsRoute: typeof AuthenticatedAdminCampaignsRoute
   AuthenticatedAdminDepositsRoute: typeof AuthenticatedAdminDepositsRoute
   AuthenticatedAdminOverviewRoute: typeof AuthenticatedAdminOverviewRoute
   AuthenticatedAdminPaymentConfigRoute: typeof AuthenticatedAdminPaymentConfigRoute
@@ -659,6 +680,7 @@ const AuthenticatedAdminRouteRouteChildren: AuthenticatedAdminRouteRouteChildren
     AuthenticatedAdminAnnouncementsRoute: AuthenticatedAdminAnnouncementsRoute,
     AuthenticatedAdminAssetsRoute: AuthenticatedAdminAssetsRoute,
     AuthenticatedAdminAuditRoute: AuthenticatedAdminAuditRoute,
+    AuthenticatedAdminCampaignsRoute: AuthenticatedAdminCampaignsRoute,
     AuthenticatedAdminDepositsRoute: AuthenticatedAdminDepositsRoute,
     AuthenticatedAdminOverviewRoute: AuthenticatedAdminOverviewRoute,
     AuthenticatedAdminPaymentConfigRoute: AuthenticatedAdminPaymentConfigRoute,
