@@ -1,191 +1,234 @@
 /**
  * Supabase Edge Function: cloudpay-proxy
  * Proxies CloudPay API calls server-side.
- * Handles: M-Pesa STK Push (deposit) + status check
- *
- * Live base URL:    https://pay.cloud.or.ke/api
- * Sandbox base URL: https://pay.cloud.or.ke/sandbox/api
- *
- * ── Config priority ───────────────────────────────────────────────────────────
- * 1. Supabase Secrets (Deno.env)
- * 2. platform_settings DB table (Admin → Payment Config)
+ * Handles: M-Pesa STK Push (deposit) + status check + token test
  *
  * Deploy:
  *   npx supabase functions deploy cloudpay-proxy \
- *     --project-ref YOUR_PROJECT_REF \
- *     --no-verify-jwt --use-api
+ *     --project-ref oevuqograxqkensvqxzt \
+ *     --no-verify-jwt
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Max-Age": "86400",
 };
 
-// ── DB config cache ────────────────────────────────────────────────────────────
-let _dbConfig: Record<string, string> | null = null;
-
-async function getDbConfig(): Promise<Record<string, string>> {
-  if (_dbConfig) return _dbConfig;
-  const supabaseUrl    = Deno.env.get("SUPABASE_URL")!;
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const client = createClient(supabaseUrl, serviceRoleKey);
-  const { data } = await client
-    .from("platform_settings")
-    .select("cloudpay_consumer_key, cloudpay_consumer_secret, cloudpay_base_url, cloudpay_callback_url, cloudpay_signing_secret")
-    .eq("id", "global")
-    .single();
-  _dbConfig = (data as Record<string, string>) ?? {};
-  return _dbConfig;
+function jsonResponse(data: any, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
 }
 
-async function cfg(envKey: string, dbKey: string): Promise<string> {
-  const fromEnv = Deno.env.get(envKey);
-  if (fromEnv) return fromEnv;
-  const db = await getDbConfig();
-  return db[dbKey] ?? "";
+class Logger {
+  private context: string;
+  constructor(context = "cloudpay-proxy") { this.context = context; }
+  private log(level: string, message: string, data?: any) {
+    const ts = new Date().toISOString();
+    const line = `[${ts}] [${level.toUpperCase()}] [${this.context}] ${message}`;
+    data ? console.log(`${line}\n${JSON.stringify(data, null, 2)}`) : console.log(line);
+  }
+  info(msg: string, d?: any)  { this.log("info",  msg, d); }
+  warn(msg: string, d?: any)  { this.log("warn",  msg, d); }
+  error(msg: string, d?: any) { this.log("error", msg, d); }
+  debug(msg: string, d?: any) { this.log("debug", msg, d); }
 }
+const log = new Logger();
 
-// ── Get CloudPay access token ─────────────────────────────────────────────────
-async function getToken(baseUrl: string, consumerKey: string, consumerSecret: string): Promise<string> {
+// ── Get CloudPay token ─────────────────────────────────────────────────────────
+async function getCloudPayToken(baseUrl: string, consumerKey: string, consumerSecret: string): Promise<string> {
   const credentials = btoa(`${consumerKey}:${consumerSecret}`);
+  log.info("Getting token", { baseUrl, key: consumerKey.slice(0, 8) + "…" });
 
-  // Try 1: HTTP Basic auth with form body (as per CloudPay docs)
+  // CloudPay: POST /oauth/token with JSON body
   const res = await fetch(`${baseUrl}/oauth/token`, {
     method: "POST",
     headers: {
       "Authorization": `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Type": "application/json",
+      "Accept": "application/json",
     },
-    body: "grant_type=client_credentials",
-  });
-
-  if (res.ok) {
-    const data = await res.json();
-    if (data.access_token) return data.access_token as string;
-  }
-
-  // Try 2: JSON body (CloudPay docs alternative)
-  const res2 = await fetch(`${baseUrl}/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ consumerKey, consumerSecret }),
   });
-  const data2 = await res2.json();
-  if (data2.access_token) return data2.access_token as string;
-  throw new Error(`CloudPay token error: ${data2.message ?? JSON.stringify(data2)}`);
+
+  const text = await res.text();
+  log.debug("Token response", { status: res.status, body: text.slice(0, 300) });
+
+  if (!res.ok) {
+    throw new Error(`Token HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  let data: any;
+  try { data = JSON.parse(text); } catch { throw new Error(`Non-JSON token response: ${text.slice(0, 100)}`); }
+
+  const token = data.access_token ?? data.data?.access_token;
+  if (!token) throw new Error(`No access_token in response: ${JSON.stringify(data)}`);
+
+  log.info("Token OK", { preview: token.slice(0, 10) + "…" });
+  return token;
 }
 
-// ── Main handler ───────────────────────────────────────────────────────────────
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  if (req.method !== "POST")   return new Response("Method not allowed", { status: 405, headers: CORS });
+function formatPhone(phone: string): string {
+  let c = String(phone).replace(/[\s\-()]/g, "");
+  if (c.startsWith("0"))   c = "254" + c.slice(1);
+  if (!c.startsWith("254")) c = "254" + c;
+  return c;
+}
 
-  const url    = new URL(req.url);
-  const action = url.searchParams.get("action") ?? "";
+async function logToDB(table: string, data: any) {
+  try {
+    await db.from(table).insert({ ...data, created_at: new Date().toISOString() });
+  } catch (e: any) { log.warn(`DB log failed (${table})`, { error: e.message }); }
+}
+
+// ── Config: env > DB ──────────────────────────────────────────────────────────
+let _cfg: Record<string, string> | null = null;
+async function getConfig() {
+  if (_cfg) return _cfg;
+  const { data } = await db.from("platform_settings")
+    .select("cloudpay_consumer_key, cloudpay_consumer_secret, cloudpay_base_url, cloudpay_callback_url")
+    .eq("id", "global").single();
+  _cfg = data ?? {};
+  return _cfg!;
+}
+async function cfg(envKey: string, dbKey: string): Promise<string> {
+  const v = Deno.env.get(envKey);
+  if (v) return v;
+  const c = await getConfig();
+  return c[dbKey] ?? "";
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+serve(async (req) => {
+  const rid = crypto.randomUUID();
+  const t0  = Date.now();
+
+  if (req.method === "OPTIONS") return new Response("ok", { status: 200, headers: CORS });
+  if (req.method !== "POST")    return jsonResponse({ error: "Use POST" }, 405);
 
   try {
-    const BASE_URL      = (await cfg("CLOUDPAY_BASE_URL",       "cloudpay_base_url")) || "https://pay.cloud.or.ke/api";
-    const CONSUMER_KEY  = await cfg("CLOUDPAY_CONSUMER_KEY",    "cloudpay_consumer_key");
-    const CONSUMER_SEC  = await cfg("CLOUDPAY_CONSUMER_SECRET", "cloudpay_consumer_secret");
-    const CALLBACK_URL  = await cfg("CLOUDPAY_CALLBACK_URL",    "cloudpay_callback_url");
+    const url    = new URL(req.url);
+    const action = url.searchParams.get("action") ?? "";
 
-    // ── Test connection ─────────────────────────────────────────────────────
+    const CONSUMER_KEY = await cfg("CLOUDPAY_CONSUMER_KEY",    "cloudpay_consumer_key");
+    const CONSUMER_SEC = await cfg("CLOUDPAY_CONSUMER_SECRET", "cloudpay_consumer_secret");
+    const BASE_URL     = (await cfg("CLOUDPAY_BASE_URL",       "cloudpay_base_url")) || "https://www.pay.cloud.or.ke/api";
+    const CALLBACK_URL = await cfg("CLOUDPAY_CALLBACK_URL",    "cloudpay_callback_url");
+
+    // ── test-token ──────────────────────────────────────────────────────────
     if (action === "test-token") {
-      let body: Record<string, string> = {};
-      try { body = await req.json(); } catch { /* no body */ }
-      const testBase = body.base_url       || BASE_URL;
-      const testKey  = body.consumer_key   || CONSUMER_KEY;
+      let body: any = {};
+      try { body = await req.json(); } catch { /* ok */ }
+
+      const testKey  = body.consumer_key    || CONSUMER_KEY;
       const testSec  = body.consumer_secret || CONSUMER_SEC;
+      const testBase = body.base_url        || BASE_URL;
 
       if (!testKey || !testSec) {
-        return new Response(JSON.stringify({ ok: false, error: "Missing Consumer Key or Secret" }), {
-          status: 400, headers: { ...CORS, "Content-Type": "application/json" },
-        });
+        return jsonResponse({ ok: false, error: "Missing Consumer Key or Secret" }, 400);
       }
       try {
-        const token = await getToken(testBase, testKey, testSec);
-        return new Response(JSON.stringify({ ok: true, token: token.slice(0, 8) + "…" }), {
-          status: 200, headers: { ...CORS, "Content-Type": "application/json" },
-        });
-      } catch (err: any) {
-        return new Response(JSON.stringify({ ok: false, error: err?.message }), {
-          status: 400, headers: { ...CORS, "Content-Type": "application/json" },
-        });
+        const token = await getCloudPayToken(testBase, testKey, testSec);
+        return jsonResponse({ ok: true, token: token.slice(0, 20) + "…", message: "Token obtained successfully" });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message }, 400);
       }
     }
 
-    // Validate required config for real calls
-    const missing = [
-      !CONSUMER_KEY && "CONSUMER_KEY",
-      !CONSUMER_SEC && "CONSUMER_SECRET",
-    ].filter(Boolean);
-
-    if (missing.length) {
-      return new Response(
-        JSON.stringify({ error: `Missing CloudPay config: ${missing.join(", ")}. Set these in Admin → Payment Config.` }),
-        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
-      );
-    }
-
-    const token = await getToken(BASE_URL, CONSUMER_KEY, CONSUMER_SEC);
-
-    // ── STK Push (M-Pesa deposit) ───────────────────────────────────────────
+    // ── stk-push ────────────────────────────────────────────────────────────
     if (action === "stk-push") {
-      const { phone, amount, transactionReference, description } = await req.json();
+      if (!CONSUMER_KEY || !CONSUMER_SEC) {
+        return jsonResponse({ error: "CloudPay not configured. Set credentials in Admin → Payment Config." }, 500);
+      }
 
-      const body = {
-        phone:                String(phone),
+      let body: any;
+      try { body = await req.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
+
+      const { phone, amount, transactionReference, description } = body;
+      if (!phone)              return jsonResponse({ error: "phone is required" }, 400);
+      if (!amount || amount <= 0) return jsonResponse({ error: "Valid amount is required" }, 400);
+
+      const cleanPhone = formatPhone(phone);
+      log.info("STK push", { rid, phone: cleanPhone, amount, ref: transactionReference });
+
+      const token = await getCloudPayToken(BASE_URL, CONSUMER_KEY, CONSUMER_SEC);
+
+      const stkBody: any = {
+        phone:                cleanPhone,
         amount:               Math.round(Number(amount)),
-        transactionReference: transactionReference ?? `DG-${Date.now()}`,
-        description:          description ?? "DerivGrid Deposit",
+        transactionReference: transactionReference || `DG-${Date.now()}`,
+        description:          description || "DerivGrid Deposit",
       };
+      if (CALLBACK_URL) stkBody.callbackUrl = CALLBACK_URL;
 
-      console.log("[CloudPay STK] Request:", JSON.stringify({ ...body }));
-
-      const res = await fetch(`${BASE_URL}/payments/mpesa/stkpush`, {
-        method:  "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type":  "application/json",
-        },
-        body: JSON.stringify(body),
+      const stkRes  = await fetch(`${BASE_URL}/payments/mpesa/stkpush`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify(stkBody),
       });
 
-      const data = await res.json();
-      console.log("[CloudPay STK] Response:", res.status, JSON.stringify(data));
+      const stkText = await stkRes.text();
+      log.debug("STK response", { status: stkRes.status, body: stkText.slice(0, 300) });
 
-      _dbConfig = null; // reset cache
-      return new Response(JSON.stringify(data), {
-        status: res.ok ? 200 : 400,
-        headers: { ...CORS, "Content-Type": "application/json" },
+      let data: any;
+      try { data = JSON.parse(stkText); } catch {
+        return jsonResponse({ error: `Invalid response: ${stkText.slice(0, 100)}` }, 502);
+      }
+
+      if (!stkRes.ok) {
+        log.warn("STK failed", { status: stkRes.status, data });
+        await logToDB("payment_logs", { request_id: rid, type: "stk_push", phone: cleanPhone, amount, status: "failed", metadata: { error: data } });
+        return jsonResponse({ error: data.message ?? data.error ?? "STK push failed", details: data }, stkRes.status);
+      }
+
+      const payload   = data?.data ?? data;
+      const reference = payload?.reference;
+      if (!reference) {
+        log.error("No reference returned", { data });
+        return jsonResponse({ error: "No reference returned from CloudPay", details: data }, 500);
+      }
+
+      await logToDB("payment_logs", {
+        request_id: rid, type: "stk_push", phone: cleanPhone, amount, reference, status: "sent",
+        metadata: { ref: stkBody.transactionReference, checkoutRequestId: payload.checkoutRequestId },
       });
+
+      log.info("STK success", { rid, reference, duration: `${Date.now() - t0}ms` });
+      return jsonResponse({ status: "success", reference, checkoutRequestId: payload.checkoutRequestId, phone: cleanPhone, amount, requestId: rid });
     }
 
-    // ── Status check ────────────────────────────────────────────────────────
+    // ── status ──────────────────────────────────────────────────────────────
     if (action === "status") {
-      const { reference } = await req.json();
-      const res = await fetch(`${BASE_URL}/payments/status/${reference}`, {
-        headers: { "Authorization": `Bearer ${token}` },
+      if (!CONSUMER_KEY || !CONSUMER_SEC) return jsonResponse({ error: "CloudPay not configured" }, 500);
+      let body: any;
+      try { body = await req.json(); } catch { return jsonResponse({ error: "Invalid JSON body" }, 400); }
+      const { reference } = body;
+      if (!reference) return jsonResponse({ error: "reference is required" }, 400);
+
+      const token   = await getCloudPayToken(BASE_URL, CONSUMER_KEY, CONSUMER_SEC);
+      const res     = await fetch(`${BASE_URL}/payments/status/${reference}`, {
+        headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" },
       });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
-        status: res.ok ? 200 : 400,
-        headers: { ...CORS, "Content-Type": "application/json" },
-      });
+      const data    = await res.json();
+      return jsonResponse({ ...data, requestId: rid });
     }
 
-    return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
-      status: 400, headers: { ...CORS, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: `Unknown action: ${action}`, available: ["test-token", "stk-push", "status"] }, 400);
 
-  } catch (err: any) {
-    console.error("[cloudpay-proxy] Error:", err?.message);
-    return new Response(JSON.stringify({ error: err?.message ?? "Internal error" }), {
-      status: 500, headers: { ...CORS, "Content-Type": "application/json" },
-    });
+  } catch (e: any) {
+    log.error("Unhandled error", { rid, error: e.message, stack: e.stack });
+    return jsonResponse({ error: "Internal server error", details: e.message, requestId: rid }, 500);
   }
 });

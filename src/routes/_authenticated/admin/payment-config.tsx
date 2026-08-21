@@ -22,11 +22,11 @@ const CLOUDPAY_FIELDS = [
   {
     key:         "cloudpay_base_url",
     label:       "CloudPay Base URL",
-    placeholder: "https://pay.cloud.or.ke/api",
-    hint:        "Use https://pay.cloud.or.ke/api for live, https://pay.cloud.or.ke/sandbox/api for testing.",
+    placeholder: "https://www.pay.cloud.or.ke/api",
+    hint:        "Use https://www.pay.cloud.or.ke/api for live, https://pay.cloud.or.ke/sandbox/api for testing. Note: always include www for the live URL.",
     secret: false,
     options: [
-      { label: "Live (production)",  value: "https://pay.cloud.or.ke/api" },
+      { label: "Live (production)",  value: "https://www.pay.cloud.or.ke/api" },
       { label: "Sandbox (testing)",  value: "https://pay.cloud.or.ke/sandbox/api" },
     ],
   },

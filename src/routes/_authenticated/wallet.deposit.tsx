@@ -20,7 +20,6 @@ const CLOUDPAY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cloudpay
 
 type Step = "form" | "waiting" | "success" | "review" | "timeout";
 
-/** Normalise phone to 254XXXXXXXXX */
 function normalisePhone(raw: string): string {
   const c = raw.trim().replace(/[\s\-()]/g, "");
   if (/^254(7|1)\d{8}$/.test(c))   return c;
@@ -36,41 +35,38 @@ function maskMiddle(digits: string): string {
   return chars.join("");
 }
 
-function applyMaskedEdit(oldDisplayed: string, oldRaw: string, newTyped: string): string {
-  let start = 0;
-  while (start < oldDisplayed.length && start < newTyped.length && oldDisplayed[start] === newTyped[start]) start++;
-  let oldEnd = oldDisplayed.length, newEnd = newTyped.length;
-  while (oldEnd > start && newEnd > start && oldDisplayed[oldEnd - 1] === newTyped[newEnd - 1]) { oldEnd--; newEnd--; }
-  const insertedDigits = newTyped.slice(start, newEnd).replace(/\D/g, "");
-  return (oldRaw.slice(0, start) + insertedDigits + oldRaw.slice(oldEnd)).slice(0, 12);
+function applyMaskedEdit(oldD: string, oldR: string, newT: string): string {
+  let s = 0;
+  while (s < oldD.length && s < newT.length && oldD[s] === newT[s]) s++;
+  let oe = oldD.length, ne = newT.length;
+  while (oe > s && ne > s && oldD[oe-1] === newT[ne-1]) { oe--; ne--; }
+  return (oldR.slice(0, s) + newT.slice(s, ne).replace(/\D/g, "") + oldR.slice(oe)).slice(0, 12);
 }
 
-/** Fire CloudPay STK push */
-async function cloudpaySTKPush(phone: string, amount: number, transactionReference: string) {
+async function cloudpaySTKPush(phone: string, amount: number, txRef: string) {
+  console.log("[Deposit] STK push →", { phone, amount, txRef });
+
   const res = await fetch(`${CLOUDPAY_URL}?action=stk-push`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: ANON_KEY },
-    body: JSON.stringify({
-      phone,
-      amount: Math.round(amount),
-      transactionReference,
-      description: "DerivGrid Deposit",
-    }),
+    headers: { "Content-Type": "application/json", "apikey": ANON_KEY },
+    body: JSON.stringify({ phone, amount: Math.round(amount), transactionReference: txRef, description: "DerivGrid Deposit" }),
   }).catch(() => { throw new Error("Could not reach payment service. Check your connection."); });
 
-  const data = await res.json().catch(() => ({}));
+  const text = await res.text();
+  console.log("[Deposit] STK response:", res.status, text.slice(0, 200));
+
+  let data: any;
+  try { data = JSON.parse(text); } catch { throw new Error(`Invalid response: ${text.slice(0, 100)}`); }
 
   if (!res.ok || data.status === "error") {
-    throw new Error(data?.message ?? data?.error ?? `Payment error (${res.status})`);
+    throw new Error(data?.message ?? data?.error ?? data?.detail ?? `Payment error (${res.status})`);
   }
 
-  // CloudPay returns { status: "success", data: { reference, checkoutRequestId } }
-  // or directly { reference, checkoutRequestId }
-  const payload = data?.data ?? data;
-  if (!payload?.reference) {
-    throw new Error(data?.message ?? "STK push failed — no reference returned");
-  }
+  const payload   = data?.data ?? data;
+  const reference = payload?.reference;
+  if (!reference) throw new Error(data?.message ?? "STK push failed — no reference returned");
 
+  console.log("[Deposit] STK success:", reference);
   return payload as { reference: string; checkoutRequestId?: string };
 }
 
@@ -78,21 +74,21 @@ const TIMEOUT_SECS        = 90;
 const MARKETER_RESOLVE_AT = 73;
 
 function DepositPage() {
-  const { settings } = usePlatformSettings({ fresh: true });
+  const { settings, loaded: settingsLoaded } = usePlatformSettings({ fresh: true });
   const { getActiveCampaign, calculateDepositBonus } = useCampaigns();
   const MIN_KES = settings.min_deposit_kes;
   const MAX_KES = settings.max_deposit_kes;
 
-  const [step,             setStep]             = useState<Step>("form");
-  const [loading,          setLoading]          = useState(false);
-  const [phone,            setPhone]            = useState("");
-  const [amount,           setAmount]           = useState("");
-  const [phoneErr,         setPhoneErr]         = useState("");
-  const [amountErr,        setAmountErr]        = useState("");
-  const [countdown,        setCountdown]        = useState(TIMEOUT_SECS);
-  const [showPhone,        setShowPhone]        = useState(false);
-  const [depositCampaign,  setDepositCampaign]  = useState<any>(null);
-  const [calculatedBonus,  setCalculatedBonus]  = useState(0);
+  const [step,            setStep]            = useState<Step>("form");
+  const [loading,         setLoading]         = useState(false);
+  const [phone,           setPhone]           = useState("");
+  const [amount,          setAmount]          = useState("");
+  const [phoneErr,        setPhoneErr]        = useState("");
+  const [amountErr,       setAmountErr]       = useState("");
+  const [countdown,       setCountdown]       = useState(TIMEOUT_SECS);
+  const [showPhone,       setShowPhone]       = useState(false);
+  const [campaign,        setCampaign]        = useState<any>(null);
+  const [calculatedBonus, setCalculatedBonus] = useState(0);
 
   const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef   = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -102,19 +98,12 @@ function DepositPage() {
 
   const displayedPhone = showPhone ? phone : maskMiddle(phone);
 
-  useEffect(() => {
-    const campaign = getActiveCampaign("deposit_double");
-    setDepositCampaign(campaign);
-  }, [getActiveCampaign]);
+  useEffect(() => { setCampaign(getActiveCampaign("deposit_double")); }, [getActiveCampaign]);
 
   useEffect(() => {
-    if (amount && depositCampaign) {
-      const amountCents = Math.round(parseFloat(amount) * 100);
-      setCalculatedBonus(calculateDepositBonus(amountCents));
-    } else {
-      setCalculatedBonus(0);
-    }
-  }, [amount, depositCampaign, calculateDepositBonus]);
+    if (amount && campaign) setCalculatedBonus(calculateDepositBonus(Math.round(parseFloat(amount) * 100)));
+    else setCalculatedBonus(0);
+  }, [amount, campaign, calculateDepositBonus]);
 
   const cleanup = useCallback(() => {
     if (tickRef.current)    { clearInterval(tickRef.current);   tickRef.current    = null; }
@@ -131,61 +120,31 @@ function DepositPage() {
     setCountdown(0);
     setStep(outcome);
     if (outcome === "success") {
-      const bonusMsg = calculatedBonus > 0
-        ? ` Deposit bonus of KES ${(calculatedBonus / 100).toLocaleString()} credited!`
-        : "";
-      toast.success(`Deposit confirmed! Wallet credited.${bonusMsg}`);
+      const bonus = calculatedBonus > 0 ? ` Bonus of KES ${(calculatedBonus / 100).toLocaleString()} credited!` : "";
+      toast.success(`Deposit confirmed! Wallet credited.${bonus}`);
     }
   }, [cleanup, calculatedBonus]);
 
-  // ── Complete deposit (marketer path — credits wallet client-side) ───────────
   const completeMarketerDeposit = useCallback(async (depositId: string) => {
-    await (supabase.from("deposits") as any)
-      .update({ status: "completed", updated_at: new Date().toISOString() })
-      .eq("id", depositId);
-
-    const { data: depData } = await (supabase.from("deposits") as any)
-      .select("wallet_id, amount_cents, bonus_cents, user_id, campaign_id")
-      .eq("id", depositId).single();
-
-    if (!depData) return;
+    await (supabase.from("deposits") as any).update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", depositId);
+    const { data: dep } = await (supabase.from("deposits") as any).select("wallet_id, amount_cents, bonus_cents, user_id, campaign_id").eq("id", depositId).single();
+    if (!dep) return;
 
     let bonusToCredit = 0;
-    if (depData.bonus_cents > 0 && depData.campaign_id) {
-      const { data: campaign } = await (supabase.from("campaigns") as any)
-        .select("is_active, starts_at, ends_at, max_bonus_cents")
-        .eq("id", depData.campaign_id).single();
-      if (campaign) {
-        const now      = new Date();
-        const isActive = campaign.is_active &&
-          (!campaign.starts_at || new Date(campaign.starts_at) <= now) &&
-          (!campaign.ends_at   || new Date(campaign.ends_at)   > now);
-        if (isActive) bonusToCredit = Math.min(depData.bonus_cents, campaign.max_bonus_cents);
+    if (dep.bonus_cents > 0 && dep.campaign_id) {
+      const { data: c } = await (supabase.from("campaigns") as any).select("is_active, starts_at, ends_at, max_bonus_cents").eq("id", dep.campaign_id).single();
+      if (c) {
+        const now = new Date();
+        if (c.is_active && (!c.starts_at || new Date(c.starts_at) <= now) && (!c.ends_at || new Date(c.ends_at) > now))
+          bonusToCredit = Math.min(dep.bonus_cents, c.max_bonus_cents);
       }
     }
 
-    const { data: walletData } = await (supabase.from("wallets") as any)
-      .select("balance_cents").eq("id", depData.wallet_id).single();
-
-    const totalCredit = depData.amount_cents + bonusToCredit;
-    await (supabase.from("wallets") as any).update({
-      balance_cents: (walletData?.balance_cents ?? 0) + totalCredit,
-      updated_at: new Date().toISOString(),
-    }).eq("id", depData.wallet_id);
-
-    await (supabase.from("transactions") as any).insert({
-      user_id: depData.user_id, wallet_id: depData.wallet_id,
-      type: "deposit", amount_cents: depData.amount_cents, currency: "KES",
-      description: "Deposit via M-Pesa", metadata: { deposit_id: depositId, simulated: true, mode: "marketer" },
-    });
-
+    const { data: w } = await (supabase.from("wallets") as any).select("balance_cents").eq("id", dep.wallet_id).single();
+    await (supabase.from("wallets") as any).update({ balance_cents: (w?.balance_cents ?? 0) + dep.amount_cents + bonusToCredit, updated_at: new Date().toISOString() }).eq("id", dep.wallet_id);
+    await (supabase.from("transactions") as any).insert({ user_id: dep.user_id, wallet_id: dep.wallet_id, type: "deposit", amount_cents: dep.amount_cents, currency: "KES", description: "Deposit via M-Pesa", metadata: { deposit_id: depositId, simulated: true, mode: "marketer" } });
     if (bonusToCredit > 0) {
-      await (supabase.from("transactions") as any).insert({
-        user_id: depData.user_id, wallet_id: depData.wallet_id,
-        type: "deposit", amount_cents: bonusToCredit, currency: "KES",
-        description: "Deposit doubling bonus",
-        metadata: { deposit_id: depositId, campaign_id: depData.campaign_id, bonus: true },
-      });
+      await (supabase.from("transactions") as any).insert({ user_id: dep.user_id, wallet_id: dep.wallet_id, type: "deposit", amount_cents: bonusToCredit, currency: "KES", description: "Deposit doubling bonus", metadata: { deposit_id: depositId, campaign_id: dep.campaign_id, bonus: true } });
     }
   }, []);
 
@@ -196,10 +155,7 @@ function DepositPage() {
     setStep("waiting");
 
     tickRef.current = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) { if (tickRef.current) clearInterval(tickRef.current); tickRef.current = null; return 0; }
-        return prev - 1;
-      });
+      setCountdown(p => { if (p <= 1) { if (tickRef.current) clearInterval(tickRef.current); tickRef.current = null; return 0; } return p - 1; });
     }, 1000);
 
     if (isMarketer) {
@@ -211,30 +167,25 @@ function DepositPage() {
     } else {
       timeoutRef.current = setTimeout(async () => {
         if (resolvedRef.current) return;
-        const { data } = await (supabase.from("deposits") as any)
-          .select("status").eq("id", depositId).single();
+        const { data } = await (supabase.from("deposits") as any).select("status").eq("id", depositId).single();
         if (data?.status === "completed") { resolve("success"); return; }
         if (data?.status === "pending")   { resolve("review");  return; }
         resolve("timeout");
       }, TIMEOUT_SECS * 1000);
 
-      // Realtime subscription
       const ch = supabase.channel(`deposit-${depositId}`)
-        .on("postgres_changes",
-          { event: "UPDATE", schema: "public", table: "deposits", filter: `id=eq.${depositId}` },
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "deposits", filter: `id=eq.${depositId}` },
           (payload) => {
-            const s = (payload.new as any)?.status as string;
-            if (s === "completed") { resolve("success"); return; }
-            if (s === "failed")    { resolve("timeout"); return; }
+            const s = (payload.new as any)?.status;
+            if (s === "completed") resolve("success");
+            if (s === "failed")    resolve("timeout");
           })
         .subscribe();
       channelRef.current = ch;
 
-      // 4s polling fallback
       const poll = setInterval(async () => {
         if (resolvedRef.current) { clearInterval(poll); return; }
-        const { data } = await (supabase.from("deposits") as any)
-          .select("status").eq("id", depositId).single();
+        const { data } = await (supabase.from("deposits") as any).select("status").eq("id", depositId).single();
         if (!data) return;
         if (data.status === "completed") { clearInterval(poll); resolve("success"); }
         if (data.status === "failed")    { clearInterval(poll); resolve("timeout"); }
@@ -251,15 +202,9 @@ function DepositPage() {
     const amt       = parseFloat(amount);
     let ok = true;
 
-    if (!/^254(7|1)\d{8}$/.test(normPhone)) {
-      setPhoneErr("Enter a valid M-Pesa number (07XX, 01XX, or +254)"); ok = false;
-    }
-    if (!amount || isNaN(amt) || amt < MIN_KES) {
-      setAmountErr(`Minimum KES ${MIN_KES.toLocaleString()}`); ok = false;
-    }
-    if (amt > MAX_KES) {
-      setAmountErr(`Maximum KES ${MAX_KES.toLocaleString()}`); ok = false;
-    }
+    if (!/^254(7|1)\d{8}$/.test(normPhone)) { setPhoneErr("Enter a valid M-Pesa number (07XX, 01XX, or +254)"); ok = false; }
+    if (!amount || isNaN(amt) || amt < MIN_KES) { setAmountErr(`Minimum KES ${MIN_KES.toLocaleString()}`); ok = false; }
+    if (amt > MAX_KES) { setAmountErr(`Maximum KES ${MAX_KES.toLocaleString()}`); ok = false; }
     if (!ok) return;
 
     setLoading(true);
@@ -267,54 +212,40 @@ function DepositPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Please sign in again");
 
-      const { data: roleRows } = await (supabase.from("user_roles") as any).select("role").eq("user_id", user.id);
-      const isMarketer = (roleRows ?? []).some((r: any) => r.role === "marketer");
+      const { data: roles } = await (supabase.from("user_roles") as any).select("role").eq("user_id", user.id);
+      const isMarketer = (roles ?? []).some((r: any) => r.role === "marketer");
 
       const amountCents = Math.round(amt * 100);
-      const bonusCents  = depositCampaign ? calculateDepositBonus(amountCents) : 0;
+      const bonusCents  = campaign ? calculateDepositBonus(amountCents) : 0;
 
-      const walletRes = await (supabase.from("wallets") as any)
-        .select("id").eq("user_id", user.id).eq("wallet_type", "main").single();
-      if (walletRes.error || !walletRes.data) throw new Error("Wallet not found — please refresh");
-      const walletId = walletRes.data.id as string;
+      const { data: w, error: we } = await (supabase.from("wallets") as any).select("id").eq("user_id", user.id).eq("wallet_type", "main").single();
+      if (we || !w) throw new Error("Wallet not found — please refresh");
 
-      const depRes = await (supabase.from("deposits") as any).insert({
-        user_id:      user.id,
-        wallet_id:    walletId,
-        amount_cents: amountCents,
-        bonus_cents:  bonusCents,
-        currency:     "KES",
-        method:       "mpesa",
-        status:       "pending",
-        phone:        normPhone,
-        campaign_id:  depositCampaign?.id || null,
+      const { data: dep, error: de } = await (supabase.from("deposits") as any).insert({
+        user_id: user.id, wallet_id: w.id, amount_cents: amountCents, bonus_cents: bonusCents,
+        currency: "KES", method: "mpesa", status: "pending", phone: normPhone,
+        campaign_id: campaign?.id || null,
       }).select("id").single();
-
-      if (depRes.error || !depRes.data) throw new Error("Could not create deposit record");
-      const depositId = depRes.data.id as string;
+      if (de || !dep) throw new Error("Could not create deposit record");
+      const depositId = dep.id as string;
 
       if (isMarketer) {
-        await (supabase.from("deposits") as any)
-          .update({ provider_ref: `MKT-${Date.now()}` }).eq("id", depositId);
+        await (supabase.from("deposits") as any).update({ provider_ref: `MKT-${Date.now()}` }).eq("id", depositId);
         setLoading(false);
-        const bonusMsg = bonusCents > 0 ? ` Bonus: +KES ${(bonusCents / 100).toLocaleString()}!` : "";
-        toast.success(`STK push sent! Enter your M-Pesa PIN.${bonusMsg}`, { duration: 4000 });
+        const msg = bonusCents > 0 ? ` Bonus: +KES ${(bonusCents / 100).toLocaleString()}!` : "";
+        toast.success(`STK push sent! Enter your M-Pesa PIN.${msg}`, { duration: 4000 });
         startWaiting(depositId, true);
       } else {
-        // CloudPay STK push
-        const txRef = `DG-${depositId.slice(0, 8)}-${Date.now()}`;
-        const resp  = await cloudpaySTKPush(normPhone, amt, txRef);
-
-        await (supabase.from("deposits") as any)
-          .update({ provider_ref: resp.reference })
-          .eq("id", depositId);
-
+        const txRef  = `DG-${depositId.slice(0, 8)}-${Date.now()}`;
+        const resp   = await cloudpaySTKPush(normPhone, amt, txRef);
+        await (supabase.from("deposits") as any).update({ provider_ref: resp.reference }).eq("id", depositId);
         setLoading(false);
-        const bonusMsg = bonusCents > 0 ? ` Bonus: +KES ${(bonusCents / 100).toLocaleString()}!` : "";
-        toast.success(`STK push sent! Enter your M-Pesa PIN.${bonusMsg}`, { duration: 4000 });
+        const msg = bonusCents > 0 ? ` Bonus: +KES ${(bonusCents / 100).toLocaleString()}!` : "";
+        toast.success(`STK push sent! Enter your M-Pesa PIN.${msg}`, { duration: 4000 });
         startWaiting(depositId, false);
       }
     } catch (e: any) {
+      console.error("[Deposit] error:", e);
       toast.error(e?.message ?? "Payment failed. Please try again.");
       setLoading(false);
     }
@@ -324,15 +255,13 @@ function DepositPage() {
     cleanup();
     resolvedRef.current = true;
     if (depositIdRef.current) {
-      await (supabase.from("deposits") as any)
-        .update({ status: "cancelled", updated_at: new Date().toISOString() })
-        .eq("id", depositIdRef.current);
+      await (supabase.from("deposits") as any).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", depositIdRef.current);
     }
     toast.info("Payment cancelled.");
     setStep("timeout");
   };
 
-  // ── Screens ────────────────────────────────────────────────────────────────
+  // ── Success ────────────────────────────────────────────────────────────────
   if (step === "success") return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-lg mx-auto">
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-10 shadow-card text-center space-y-4">
@@ -353,6 +282,7 @@ function DepositPage() {
     </div>
   );
 
+  // ── Review ─────────────────────────────────────────────────────────────────
   if (step === "review") return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-lg mx-auto">
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-10 shadow-card text-center space-y-4">
@@ -363,13 +293,12 @@ function DepositPage() {
         <p className="text-muted-foreground text-sm max-w-sm mx-auto">
           Your payment was confirmed. Your deposit is under review and will be credited shortly.
         </p>
-        <Button className="bg-gradient-primary shadow-glow hover:opacity-95" asChild>
-          <Link to="/wallet">View Wallet</Link>
-        </Button>
+        <Button className="bg-gradient-primary shadow-glow hover:opacity-95" asChild><Link to="/wallet">View Wallet</Link></Button>
       </div>
     </div>
   );
 
+  // ── Timeout ────────────────────────────────────────────────────────────────
   if (step === "timeout") return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-lg mx-auto">
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-10 shadow-card text-center space-y-4">
@@ -387,6 +316,7 @@ function DepositPage() {
     </div>
   );
 
+  // ── Waiting ────────────────────────────────────────────────────────────────
   if (step === "waiting") return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-lg mx-auto">
       <div className="rounded-2xl border border-border/60 bg-gradient-surface p-10 shadow-card text-center space-y-5">
@@ -406,9 +336,7 @@ function DepositPage() {
         <div>
           <h2 className="text-lg font-semibold">Waiting for M-Pesa PIN</h2>
           <p className="text-sm text-muted-foreground mt-1">A prompt was sent to your phone. Enter your PIN now.</p>
-          {calculatedBonus > 0 && (
-            <p className="text-sm font-medium text-profit mt-2">🎉 You'll receive +KES {(calculatedBonus / 100).toLocaleString()} bonus!</p>
-          )}
+          {calculatedBonus > 0 && <p className="text-sm font-medium text-profit mt-2">🎉 You'll receive +KES {(calculatedBonus / 100).toLocaleString()} bonus!</p>}
           <p className="text-sm font-medium text-amber-500 mt-3">⚠️ Stay on this page while we confirm your deposit.</p>
         </div>
         <Button variant="outline" size="sm" onClick={handleCancel}
@@ -419,7 +347,7 @@ function DepositPage() {
     </div>
   );
 
-  // ── Deposit Form ───────────────────────────────────────────────────────────
+  // ── Form ───────────────────────────────────────────────────────────────────
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-lg mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -448,21 +376,12 @@ function DepositPage() {
           <div>
             <Label htmlFor="dep-phone">M-Pesa number</Label>
             <div className="relative mt-1.5">
-              <Input
-                id="dep-phone"
-                placeholder="07XX or 01XX XXX XXX"
-                className="h-11 pr-10"
-                inputMode="numeric"
-                autoComplete="off"
-                value={displayedPhone}
+              <Input id="dep-phone" placeholder="07XX or 01XX XXX XXX" className="h-11 pr-10"
+                inputMode="numeric" autoComplete="off" value={displayedPhone}
                 onChange={e => {
-                  const newRaw = showPhone
-                    ? e.target.value.replace(/\D/g, "").slice(0, 12)
-                    : applyMaskedEdit(displayedPhone, phone, e.target.value);
-                  setPhone(newRaw);
-                  setPhoneErr("");
-                }}
-              />
+                  const r = showPhone ? e.target.value.replace(/\D/g, "").slice(0, 12) : applyMaskedEdit(displayedPhone, phone, e.target.value);
+                  setPhone(r); setPhoneErr("");
+                }} />
               <button type="button" onClick={() => setShowPhone(s => !s)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 tabIndex={-1} aria-label={showPhone ? "Hide phone" : "Show phone"}>
@@ -478,23 +397,17 @@ function DepositPage() {
               placeholder={String(MIN_KES)} className="mt-1.5 h-11" value={amount}
               onChange={e => { setAmount(e.target.value); setAmountErr(""); }} />
             {amountErr && <p className="text-xs text-destructive mt-1">{amountErr}</p>}
-            <p className="text-xs text-muted-foreground mt-1">
-              Min KES {MIN_KES.toLocaleString()} · Max KES {MAX_KES.toLocaleString()}
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Min KES {MIN_KES.toLocaleString()} · Max KES {MAX_KES.toLocaleString()}</p>
             {calculatedBonus > 0 && (
               <div className="mt-2 rounded-lg bg-profit/10 border border-profit/20 p-3 flex items-center gap-2">
                 <Sparkles className="size-4 text-profit shrink-0" />
-                <p className="text-xs font-medium text-profit">
-                  You'll receive <strong>+KES {(calculatedBonus / 100).toLocaleString()}</strong> bonus!
-                </p>
+                <p className="text-xs font-medium text-profit">You'll receive <strong>+KES {(calculatedBonus / 100).toLocaleString()}</strong> bonus!</p>
               </div>
             )}
           </div>
 
           <Button type="submit" disabled={loading} className="w-full h-11 bg-gradient-primary shadow-glow hover:opacity-95">
-            {loading
-              ? <><Loader2 className="size-4 animate-spin mr-2" />Sending prompt…</>
-              : "Deposit via M-Pesa"}
+            {loading ? <><Loader2 className="size-4 animate-spin mr-2" />Sending prompt…</> : "Deposit via M-Pesa"}
           </Button>
         </form>
 
