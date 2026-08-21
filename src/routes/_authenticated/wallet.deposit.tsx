@@ -63,8 +63,15 @@ async function cloudpaySTKPush(phone: string, amount: number, transactionReferen
   if (!res.ok || data.status === "error") {
     throw new Error(data?.message ?? data?.error ?? `Payment error (${res.status})`);
   }
-  // Returns { reference, checkoutRequestId }
-  return data as { reference: string; checkoutRequestId?: string; status?: string; message?: string };
+
+  // CloudPay returns { status: "success", data: { reference, checkoutRequestId } }
+  // or directly { reference, checkoutRequestId }
+  const payload = data?.data ?? data;
+  if (!payload?.reference) {
+    throw new Error(data?.message ?? "STK push failed — no reference returned");
+  }
+
+  return payload as { reference: string; checkoutRequestId?: string };
 }
 
 const TIMEOUT_SECS        = 90;

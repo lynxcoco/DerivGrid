@@ -49,21 +49,34 @@ async function cfg(envKey: string, dbKey: string): Promise<string> {
   return db[dbKey] ?? "";
 }
 
-// ── Get CloudPay access token (HTTP Basic → Bearer) ───────────────────────────
+// ── Get CloudPay access token ─────────────────────────────────────────────────
 async function getToken(baseUrl: string, consumerKey: string, consumerSecret: string): Promise<string> {
   const credentials = btoa(`${consumerKey}:${consumerSecret}`);
+
+  // Try 1: HTTP Basic auth with form body (as per CloudPay docs)
   const res = await fetch(`${baseUrl}/oauth/token`, {
     method: "POST",
     headers: {
       "Authorization": `Basic ${credentials}`,
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
     },
+    body: "grant_type=client_credentials",
   });
-  const data = await res.json();
-  if (!data.access_token) {
-    throw new Error(`CloudPay token error: ${data.message ?? JSON.stringify(data)}`);
+
+  if (res.ok) {
+    const data = await res.json();
+    if (data.access_token) return data.access_token as string;
   }
-  return data.access_token as string;
+
+  // Try 2: JSON body (CloudPay docs alternative)
+  const res2 = await fetch(`${baseUrl}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consumerKey, consumerSecret }),
+  });
+  const data2 = await res2.json();
+  if (data2.access_token) return data2.access_token as string;
+  throw new Error(`CloudPay token error: ${data2.message ?? JSON.stringify(data2)}`);
 }
 
 // ── Main handler ───────────────────────────────────────────────────────────────
